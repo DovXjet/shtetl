@@ -1,0 +1,24 @@
+{
+  "name": "shtetl",
+  "version": "0.1.0",
+  "description": "Simple 3D model viewer with a thumbnail browser (Qt/VSG)",
+  "builtin-baseline": "b5d1a94fb7f88fd835e360fd23a45a09ceedbf48",
+  "dependencies": [
+    {
+      "name": "vsg",
+      "features": [
+        "windowing"
+      ]
+    },
+    {
+      "name": "vsgxchange",
+      "features": [
+        "assimp"
+      ]
+    },
+    {
+      "name": "qtbase",
+      "platform": "windows"
+    }
+  ]
+}

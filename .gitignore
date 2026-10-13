@@ -1,0 +1,8 @@
+build/
+compile_commands.json
+*~
+Installers/Install*.exe
+Installers/Install*.pdb
+Installers/tmp/
+vcpkg_installed/
+imgui.ini

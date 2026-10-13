@@ -1,0 +1,249 @@
+#include "MainWindow.h"
+
+#include "ModelFormats.h"
+#include "NavigationStyles.h"
+#include "OpenModelDialog.h"
+#include "ThumbnailBrowser.h"
+#include "ThumbnailService.h"
+#include "Viewport3D.h"
+
+#include <QActionGroup>
+#include <QApplication>
+#include <QDialog>
+#include <QDialogButtonBox>
+#include <QDockWidget>
+#include <QFileDialog>
+#include <QFileInfo>
+#include <QLabel>
+#include <QMenuBar>
+#include <QMessageBox>
+#include <QSettings>
+#include <QStatusBar>
+#include <QSysInfo>
+#include <QVBoxLayout>
+
+namespace
+{
+  constexpr int MaxRecentFiles = 8;
+} // namespace
+
+MainWindow::MainWindow()
+{
+  resize(1280, 800);
+  setWindowTitle("shtetl");
+
+  m_Viewport = new Viewport3D(this);
+  setCentralWidget(m_Viewport);
+
+  // The thumbnailer renders on the viewport's device, which exists now.
+  m_Service = new ThumbnailService(this);
+  m_Service->initialize(m_Viewport->device(), m_Viewport->options());
+
+  m_Browser = new ThumbnailBrowser(m_Service, this);
+  m_BrowserDock = new QDockWidget("Models", this);
+  m_BrowserDock->setObjectName("ModelsDock");
+  m_BrowserDock->setWidget(m_Browser);
+  addDockWidget(Qt::LeftDockWidgetArea, m_BrowserDock);
+  resizeDocks({m_BrowserDock}, {380}, Qt::Horizontal);
+
+  connect(m_Browser, &ThumbnailBrowser::fileSelected, this, &MainWindow::loadModel);
+
+  createMenus();
+  statusBar()->showMessage("Open a model or a directory");
+
+  const QSettings settings;
+  showDirectory(settings.value("lastDirectory", QDir::homePath()).toString());
+}
+
+MainWindow::~MainWindow()
+{
+  // Stops the thumbnail thread, which renders on the viewport's device,
+  // before the viewport (and the device) is destroyed.
+  delete m_Service;
+  m_Service = nullptr;
+}
+
+void MainWindow::createMenus()
+{
+  // See vgiv: with no consumer for a global menu the bar would vanish.
+  menuBar()->setNativeMenuBar(false);
+
+  auto* fileMenu = menuBar()->addMenu("&File");
+  fileMenu->addAction("&Open...", QKeySequence("Ctrl+O"), this, &MainWindow::openFileDialog);
+  fileMenu->addAction("Open &Directory...", QKeySequence("Ctrl+Shift+O"), this, &MainWindow::openDirectoryDialog);
+  m_RecentMenu = fileMenu->addMenu("Recent Files");
+  updateRecentMenu();
+  fileMenu->addSeparator();
+  fileMenu->addAction("&Reload", QKeySequence("F5"), this, &MainWindow::reload);
+  fileMenu->addSeparator();
+  auto* quit = fileMenu->addAction("&Quit", qApp, &QApplication::quit);
+  quit->setShortcuts({QKeySequence::Quit, QKeySequence("Q")});
+
+  auto* viewMenu = menuBar()->addMenu("&View");
+  // Also added to the window, so its shortcut works - and can bring the menu
+  // back - while the menu bar is hidden.
+  auto* menuBarAction = viewMenu->addAction("Menu Bar", this, [this](bool show) { menuBar()->setVisible(show); });
+  menuBarAction->setCheckable(true);
+  menuBarAction->setChecked(true);
+  menuBarAction->setShortcut(QKeySequence("Ctrl+M"));
+  addAction(menuBarAction);
+  auto* dockAction = m_BrowserDock->toggleViewAction();
+  dockAction->setText("Thumbnails");
+  dockAction->setShortcut(QKeySequence("F9"));
+  viewMenu->addAction(dockAction);
+  viewMenu->addSeparator();
+  auto* fit = viewMenu->addAction("Fit to Window", m_Viewport, [this]() { m_Viewport->fitAll(); });
+  fit->setShortcuts({QKeySequence("Ctrl+0"), QKeySequence("F")});
+  auto* ortho = viewMenu->addAction("Orthographic\tNumpad 5");
+  ortho->setCheckable(true);
+  connect(ortho, &QAction::toggled, m_Viewport, &Viewport3D::setOrthographic);
+  connect(m_Viewport, &Viewport3D::projectionChanged, ortho, &QAction::setChecked);
+  viewMenu->addSeparator();
+
+  // The 3D interaction flavor: the same presets as XjetStudio and RobotMotion,
+  // persisted under the same key.
+  QSettings settings;
+  const NavigationStyle current =
+      navigationStyleFromName(settings.value("Navigation/Style", QString::fromStdString(navigationStyleName(NavigationStyle::Netfabb))).toString().toStdString());
+  m_Viewport->setNavigationStyle(current);
+  auto* styleMenu = viewMenu->addMenu("&Navigation Style");
+  auto* group = new QActionGroup(styleMenu);
+  for (NavigationStyle style : allNavigationStyles())
+  {
+    auto* action = styleMenu->addAction(QString::fromStdString(navigationStyleName(style)));
+    action->setCheckable(true);
+    action->setChecked(style == current);
+    action->setToolTip(QString::fromStdString(navigationStyleDescription(style)));
+    group->addAction(action);
+    connect(action, &QAction::triggered, this, [this, style]() {
+      m_Viewport->setNavigationStyle(style);
+      QSettings().setValue("Navigation/Style", QString::fromStdString(navigationStyleName(style)));
+    });
+  }
+  styleMenu->setToolTipsVisible(true);
+  viewMenu->addSeparator();
+
+  // As vgiv's Next/Previous Image.
+  auto* next = viewMenu->addAction("Next Model", this, [this]() { goAdjacent(+1); });
+  next->setShortcuts({QKeySequence("Shift+Down"), QKeySequence("Space")});
+  auto* previous = viewMenu->addAction("Previous Model", this, [this]() { goAdjacent(-1); });
+  previous->setShortcuts({QKeySequence("Shift+Up"), QKeySequence("Backspace")});
+
+  auto* helpMenu = menuBar()->addMenu("&Help");
+  helpMenu->addAction("About shtetl", this, &MainWindow::showAboutDialog);
+}
+
+void MainWindow::showAboutDialog()
+{
+  QDialog dlg(this);
+  dlg.setWindowTitle("About shtetl");
+  auto* layout = new QVBoxLayout(&dlg);
+  layout->setSpacing(8);
+
+  auto addLabel = [&](const QString& text, const QString& style = {}) {
+    auto* l = new QLabel(text, &dlg);
+    l->setAlignment(Qt::AlignCenter);
+    l->setTextFormat(Qt::RichText);
+    l->setOpenExternalLinks(true);
+    l->setTextInteractionFlags(Qt::TextBrowserInteraction);
+    if (!style.isEmpty()) l->setStyleSheet(style);
+    layout->addWidget(l);
+  };
+
+  addLabel("shtetl " SHTETL_VERSION, "font-size: 24pt; font-weight: bold;");
+  addLabel("A simple 3D model viewer with a thumbnail browser");
+  addLabel(QString("%1 %2").arg(QSysInfo::currentCpuArchitecture(), QSysInfo::prettyProductName()));
+  addLabel("Copyright &copy; Dov Grobgeld, 2026");
+  addLabel("Email: <a href=\"mailto:dov.grobgeld@gmail.com\"><code>dov.grobgeld@gmail.com</code></a>");
+  addLabel("Commit-Id: " SHTETL_COMMIT_ID);
+  addLabel("Commit-Date: " SHTETL_COMMIT_DATE);
+
+  auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok, &dlg);
+  connect(buttons, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
+  layout->addWidget(buttons);
+  dlg.exec();
+}
+
+void MainWindow::openPath(const QString& path)
+{
+  const QFileInfo info(path);
+  if (info.isDir())
+    showDirectory(info.absoluteFilePath());
+  else if (info.isFile())
+  {
+    showDirectory(info.absolutePath());
+    m_Browser->selectFile(info.absoluteFilePath()); // loads it
+    if (m_CurrentFile != info.absoluteFilePath()) loadModel(info.absoluteFilePath()); // not a listed type
+  }
+  else
+    statusBar()->showMessage("No such file or directory: " + path);
+}
+
+void MainWindow::openFileDialog()
+{
+  OpenModelDialog dialog(m_Service, m_Browser->directory(), this);
+  if (dialog.exec() == QDialog::Accepted && !dialog.selectedFile().isEmpty()) openPath(dialog.selectedFile());
+}
+
+void MainWindow::openDirectoryDialog()
+{
+  const QString dir = QFileDialog::getExistingDirectory(this, "Open Directory", m_Browser->directory());
+  if (dir.isEmpty()) return;
+  showDirectory(dir);
+  m_BrowserDock->show();
+}
+
+void MainWindow::showDirectory(const QString& path)
+{
+  m_Browser->setDirectory(path);
+  QSettings().setValue("lastDirectory", m_Browser->directory());
+}
+
+void MainWindow::loadModel(const QString& path)
+{
+  if (path.isEmpty()) return;
+  try
+  {
+    m_Viewport->loadModel(path);
+  }
+  catch (const std::exception& e)
+  {
+    statusBar()->showMessage(QString("Failed to load %1: %2").arg(QFileInfo(path).fileName(), e.what()));
+    return;
+  }
+  m_CurrentFile = path;
+  setWindowTitle(QFileInfo(path).fileName() + " - shtetl");
+  statusBar()->showMessage(path);
+  addRecent(path);
+}
+
+void MainWindow::goAdjacent(int delta)
+{
+  const QString next = m_Browser->adjacentFile(delta);
+  if (!next.isEmpty()) m_Browser->selectFile(next);
+}
+
+void MainWindow::reload()
+{
+  m_Browser->refresh();
+  if (!m_CurrentFile.isEmpty()) loadModel(m_CurrentFile);
+}
+
+void MainWindow::addRecent(const QString& path)
+{
+  QSettings settings;
+  QStringList recent = settings.value("recentFiles").toStringList();
+  recent.removeAll(path);
+  recent.prepend(path);
+  while (recent.size() > MaxRecentFiles) recent.removeLast();
+  settings.setValue("recentFiles", recent);
+  updateRecentMenu();
+}
+
+void MainWindow::updateRecentMenu()
+{
+  m_RecentMenu->clear();
+  const QStringList recent = QSettings().value("recentFiles").toStringList();
+  for (const QString& file : recent) m_RecentMenu->addAction(file, this, [this, file]() { openPath(file); });
+  m_RecentMenu->setEnabled(!recent.isEmpty());
+}
