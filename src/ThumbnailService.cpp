@@ -17,6 +17,16 @@ namespace
 {
   constexpr int ThumbnailSize = 256;
 
+  // The colors of the models of XjetStudio's thumbnails (its ThumbnailManager):
+  // STL pink, 3MF green. Other formats bring their own materials.
+  vsg::vec4 thumbnailColor(const QString& path)
+  {
+    const QString ext = QFileInfo(path).suffix().toLower();
+    if (ext == "stl") return vsg::vec4(1.0f, 0.8f, 0.8f, 1.0f);
+    if (ext == "3mf") return vsg::vec4(0.8f, 1.0f, 0.8f, 1.0f);
+    return vsg::vec4(0.85f, 0.85f, 0.85f, 1.0f);
+  }
+
   // The PNG that caches the thumbnail of a model: in ".thumbnails" next to it,
   // or, when that can't be made, in the user's cache keyed by the directory.
   QString thumbnailPath(const QString& modelPath)
@@ -71,7 +81,7 @@ void ThumbnailWorker::makeThumbnail(const QString& path, CancelFlag cancel)
     try
     {
       {
-        const LoadedModel model = loadModel(path, m_Options, cancel.get());
+        const LoadedModel model = loadModel(path, m_Options, cancel.get(), thumbnailColor(path));
         if (cancel && cancel->load()) return;
         if (auto data = m_Renderer.render(model.node, model.bounds))
         {

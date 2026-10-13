@@ -24,7 +24,10 @@ struct LoadedModel
 // Loads a model file: STL and 3MF as compact meshes, anything else through
 // vsg::read (vsgXchange). Throws std::runtime_error on failure, and, when
 // *cancel turns true while an STL/3MF is being packed, "Abort requested!".
-LoadedModel loadModel(const QString& path, vsg::ref_ptr<vsg::Options> options, const std::atomic<bool>* cancel = nullptr);
+// `diffuse` is the color of the compact meshes (STL and 3MF); the default is a
+// neutral light grey.
+LoadedModel loadModel(const QString& path, vsg::ref_ptr<vsg::Options> options, const std::atomic<bool>* cancel = nullptr,
+                      const vsg::vec4& diffuse = vsg::vec4(0.85f, 0.85f, 0.85f, 1.0f));
 
 // An indexed triangle mesh, as 3MF delivers it.
 struct IndexedMesh
@@ -38,5 +41,5 @@ struct IndexedMesh
 IndexedMesh read3MF(const QString& path);
 
 // STL, binary or ASCII, into a mesh of unconnected triangles.
-LoadedModel loadStl(const QString& path, const std::atomic<bool>* cancel);
-LoadedModel load3MF(const QString& path, const std::atomic<bool>* cancel);
+LoadedModel loadStl(const QString& path, const std::atomic<bool>* cancel, const vsg::vec4& diffuse);
+LoadedModel load3MF(const QString& path, const std::atomic<bool>* cancel, const vsg::vec4& diffuse);

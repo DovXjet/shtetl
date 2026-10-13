@@ -57,7 +57,7 @@ namespace
 
   // The node that draws the packed vertices: the shaders, the state, and the
   // transform that undoes the normalisation of the positions to the box.
-  vsg::ref_ptr<vsg::Node> makeNode(vsg::ref_ptr<vsg::uivec3Array> vertices, const vsg::dvec3& boxMin, const vsg::dvec3& boxRange)
+  vsg::ref_ptr<vsg::Node> makeNode(vsg::ref_ptr<vsg::uivec3Array> vertices, const vsg::dvec3& boxMin, const vsg::dvec3& boxRange, const vsg::vec4& diffuse)
   {
     auto vertexShader = vsg::ShaderStage::create(VK_SHADER_STAGE_VERTEX_BIT, "main", resourceText(":/shaders/compact_mesh.vert"));
     auto fragmentShader = vsg::ShaderStage::create(VK_SHADER_STAGE_FRAGMENT_BIT, "main", resourceText(":/shaders/compact_mesh.frag"));
@@ -68,7 +68,7 @@ namespace
 
     auto material = vsg::PhongMaterialValue::create();
     material->value().ambient = vsg::vec4{0.12f, 0.12f, 0.12f, 1.0f};
-    material->value().diffuse = vsg::vec4{0.85f, 0.85f, 0.85f, 1.0f};
+    material->value().diffuse = diffuse;
     material->value().specular = vsg::vec4{1.0f, 1.0f, 1.0f, 1.0f};
     material->value().shininess = 16.0f;
     shaderSet->addDescriptorBinding("material", "", 1, 10, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1,
@@ -108,7 +108,7 @@ namespace
   // vec3. Two passes over them (bounds, then encoding), so that a source that
   // reads them straight from a mapped file never needs them in memory twice.
   template <class GetTriangle>
-  LoadedModel pack(size_t faces, GetTriangle getTriangle, const std::atomic<bool>* cancel)
+  LoadedModel pack(size_t faces, GetTriangle getTriangle, const std::atomic<bool>* cancel, const vsg::vec4& diffuse)
   {
     if (faces == 0) throw std::runtime_error("The file has no triangles");
     if (faces > 0x7FFFFFFF / 3) throw std::runtime_error("Too many triangles");
@@ -173,7 +173,7 @@ namespace
     }
 
     LoadedModel model;
-    model.node = makeNode(vertices, vsg::dvec3(lo.x, lo.y, lo.z), vsg::dvec3(range.x, range.y, range.z));
+    model.node = makeNode(vertices, vsg::dvec3(lo.x, lo.y, lo.z), vsg::dvec3(range.x, range.y, range.z), diffuse);
     model.bounds = vsg::dbox(vsg::dvec3(lo.x, lo.y, lo.z), vsg::dvec3(hi.x, hi.y, hi.z));
     return model;
   }
@@ -186,7 +186,7 @@ namespace
   }
 } // namespace
 
-LoadedModel loadStl(const QString& path, const std::atomic<bool>* cancel)
+LoadedModel loadStl(const QString& path, const std::atomic<bool>* cancel, const vsg::vec4& diffuse)
 {
   QFile file(path);
   if (!file.open(QIODevice::ReadOnly)) throw std::runtime_error("Cannot open " + path.toStdString());
@@ -213,7 +213,7 @@ LoadedModel loadStl(const QString& path, const std::atomic<bool>* cancel)
       return pack(count, [data](size_t i, vsg::vec3* p) {
         const uchar* tri = data + 84 + 50 * i + 12; // after the normal
         for (int v = 0; v < 3; ++v) p[v] = readVec3(tri + 12 * v);
-      }, cancel);
+      }, cancel, diffuse);
     }
     file.seek(0);
   }
@@ -241,22 +241,22 @@ LoadedModel loadStl(const QString& path, const std::atomic<bool>* cancel)
   if (vertices.empty() || vertices.size() % 3 != 0) throw std::runtime_error(path.toStdString() + " is not a valid STL file");
   return pack(vertices.size() / 3, [&vertices](size_t i, vsg::vec3* p) {
     for (int v = 0; v < 3; ++v) p[v] = vertices[i * 3 + v];
-  }, cancel);
+  }, cancel, diffuse);
 }
 
-LoadedModel load3MF(const QString& path, const std::atomic<bool>* cancel)
+LoadedModel load3MF(const QString& path, const std::atomic<bool>* cancel, const vsg::vec4& diffuse)
 {
   const IndexedMesh mesh = read3MF(path);
   return pack(mesh.triangles.size(), [&mesh](size_t i, vsg::vec3* p) {
     for (int v = 0; v < 3; ++v) p[v] = mesh.vertices[mesh.triangles[i][v]];
-  }, cancel);
+  }, cancel, diffuse);
 }
 
-LoadedModel loadModel(const QString& path, vsg::ref_ptr<vsg::Options> options, const std::atomic<bool>* cancel)
+LoadedModel loadModel(const QString& path, vsg::ref_ptr<vsg::Options> options, const std::atomic<bool>* cancel, const vsg::vec4& diffuse)
 {
   const QString ext = QFileInfo(path).suffix().toLower();
-  if (ext == "stl") return loadStl(path, cancel);
-  if (ext == "3mf") return load3MF(path, cancel);
+  if (ext == "stl") return loadStl(path, cancel, diffuse);
+  if (ext == "3mf") return load3MF(path, cancel, diffuse);
 
   auto node = vsg::read_cast<vsg::Node>(shtetl::pathToUtf8(shtetl::qStringToPath(path)), options);
   if (!node) throw std::runtime_error("Could not read " + path.toStdString());
