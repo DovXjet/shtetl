@@ -32,7 +32,9 @@ const QStringList& modelExtensions()
     for (auto& reader : readers) reader->getFeatures(features);
 
     // Formats that assimp lists but that are not self-contained 3D models.
-    static const std::set<std::string> notModels = {".txt", ".xml", ".dat", ".raw", ".json", ".bin", ".zip", ".png", ".jpg", ".jpeg"};
+    static const std::set<std::string> notModels = {".txt", ".xml", ".dat", ".raw", ".json", ".bin", ".zip", ".png", ".jpg", ".jpeg",
+                                                         // assimp's STEP reader only handles IFC data, not CAD STEP files.
+                                                         ".stp", ".step"};
 
     std::set<QString> unique;
     for (auto& [ext, mask] : features.extensionFeatureMap)

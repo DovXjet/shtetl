@@ -27,6 +27,7 @@ if(MINGW AND NOT EXISTS "${MINGW_DEPS_PREFIX}/lib/cmake/vsg/vsgConfig.cmake"
 endif()
 find_package(vsg CONFIG REQUIRED)
 find_package(vsgXchange CONFIG REQUIRED)
+find_package(spdlog CONFIG REQUIRED)
 find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets)
 # QZipReader (private) reads the zip of a 3MF file.
 set(QT_NO_PRIVATE_MODULE_WARNING ON)
@@ -57,6 +58,7 @@ add_subdirectory(third_party/QtAwesome EXCLUDE_FROM_ALL)
 
 add_executable(shtetl
   src/main.cpp
+  src/Logging.cpp
   src/MainWindow.cpp
   src/Viewport3D.cpp
   src/CubeGizmo.cpp
@@ -71,7 +73,7 @@ add_executable(shtetl
 target_include_directories(shtetl PRIVATE src)
 if(WIN32)
   # UTF-8 active code page, so narrow (std::string) file paths may be non-ASCII.
-  target_sources(shtetl PRIVATE resources/shtetl.manifest)
+  target_sources(shtetl PRIVATE resources/shtetl.manifest resources/shtetl.rc)
   # GUI subsystem: no console window. Keep the plain main() entry point
   # instead of requiring WinMain.
   set_target_properties(shtetl PROPERTIES WIN32_EXECUTABLE TRUE)
@@ -88,8 +90,10 @@ file(GLOB CUBE_GIZMO_STL CONFIGURE_DEPENDS RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} 
 qt_add_resources(shtetl cube_gizmo PREFIX / BASE resources FILES ${CUBE_GIZMO_STL})
 # The shaders of the compact meshes, compiled by VSG at run time.
 qt_add_resources(shtetl shaders PREFIX / BASE resources FILES resources/shaders/compact_mesh.vert resources/shaders/compact_mesh.frag)
+# The application logo (window icon; the .ico is embedded by resources/shtetl.rc).
+qt_add_resources(shtetl icons PREFIX / BASE resources FILES resources/icons/shtetl.png)
 
-target_link_libraries(shtetl PRIVATE vsg::vsg vsgXchange::vsgXchange vsgQt::vsgQt QtAwesome Qt6::Core Qt6::Gui Qt6::GuiPrivate Qt6::Widgets)
+target_link_libraries(shtetl PRIVATE vsg::vsg vsgXchange::vsgXchange vsgQt::vsgQt QtAwesome spdlog::spdlog Qt6::Core Qt6::Gui Qt6::GuiPrivate Qt6::Widgets)
 if(OpenMP_CXX_FOUND)
   target_link_libraries(shtetl PRIVATE OpenMP::OpenMP_CXX)
 endif()

@@ -1,0 +1,3 @@
+// Application icon: first icon resource, so Explorer, the taskbar and the
+// installer shortcuts all pick it up.
+IDI_SHTETL ICON "icons/shtetl.ico"

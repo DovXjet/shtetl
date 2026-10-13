@@ -1,6 +1,7 @@
 #include "MainWindow.h"
 
 #include "ModelFormats.h"
+#include "Logging.h"
 #include "NavigationStyles.h"
 #include "OpenFileDialog.h"
 #include "ThumbnailBrowser.h"
@@ -16,6 +17,7 @@
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QLabel>
+#include <QPixmap>
 #include <QMenuBar>
 #include <QMimeData>
 #include <QMouseEvent>
@@ -183,6 +185,11 @@ void MainWindow::showAboutDialog()
     layout->addWidget(l);
   };
 
+  auto* logo = new QLabel(&dlg);
+  logo->setPixmap(QPixmap(":/icons/shtetl.png").scaled(128, 128, Qt::KeepAspectRatio, Qt::SmoothTransformation));
+  logo->setAlignment(Qt::AlignCenter);
+  layout->addWidget(logo);
+
   addLabel("shtetl " SHTETL_VERSION, "font-size: 24pt; font-weight: bold;");
   addLabel("A simple 3D model viewer with a thumbnail browser");
   addLabel(QString("%1 %2").arg(QSysInfo::currentCpuArchitecture(), QSysInfo::prettyProductName()));
@@ -209,7 +216,10 @@ void MainWindow::openPath(const QString& path)
     if (m_CurrentFile != info.absoluteFilePath()) loadModel(info.absoluteFilePath()); // not a listed type
   }
   else
+  {
+    spdlog::error("No such file or directory: {}", path.toStdString());
     statusBar()->showMessage("No such file or directory: " + path);
+  }
 }
 
 void MainWindow::openFileDialog()
@@ -240,13 +250,16 @@ void MainWindow::loadModel(const QString& path)
   if (path.isEmpty()) return;
   try
   {
+    spdlog::info("Loading {}", path.toStdString());
     m_Viewport->loadModel(path);
   }
   catch (const std::exception& e)
   {
+    spdlog::error("Failed to load {}: {}", path.toStdString(), e.what());
     statusBar()->showMessage(QString("Failed to load %1: %2").arg(QFileInfo(path).fileName(), e.what()));
     return;
   }
+  spdlog::info("Loaded {}", path.toStdString());
   m_CurrentFile = path;
   m_CopyAction->setEnabled(true);
   setWindowTitle(QFileInfo(path).fileName() + " - shtetl");

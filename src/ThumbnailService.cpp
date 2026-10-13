@@ -1,6 +1,7 @@
 #include "ThumbnailService.h"
 
 #include "CompactMesh.h"
+#include "Logging.h"
 #include "QtPathUtils.h"
 
 #include <vsg/io/read.h>
@@ -94,7 +95,7 @@ void ThumbnailWorker::makeThumbnail(const QString& path, CancelFlag cancel)
     }
     catch (const std::exception& e)
     {
-      std::cerr << "thumbnail of " << path.toStdString() << ": " << e.what() << std::endl;
+      spdlog::error("Thumbnail of {} failed: {}", path.toStdString(), e.what());
     }
   }
   emit resultReady(path, image);

@@ -1,3 +1,5 @@
+<img src="resources/icons/shtetl.png" width="128" align="right" alt="shtetl logo">
+
 # shtetl
 
 A simple 3D model viewer with a thumbnail browser, built on the same stack as
@@ -68,6 +70,9 @@ with assimp installed, e.g. in `/usr/local`):
     build/linux-release/shtetl [model-file | directory]
 
 vsgQt is fetched and built from source against Qt 6 on the first configure.
+Each run writes a log to `~/.shtetl/logs/shtetl-<timestamp>.log` (spdlog; also
+catches Qt and VSG messages) - check it when a model fails to load.
+
 The commit shown in Help > About is taken when CMake configures, so configure
 again after committing.
 

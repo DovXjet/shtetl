@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <defs>
+    <radialGradient id="bg" cx="50%" cy="45%" r="75%">
+      <stop offset="0" stop-color="#0c2a33"/>
+      <stop offset="1" stop-color="#05090c"/>
+    </radialGradient>
+    <filter id="glow" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="5"/>
+    </filter>
+    <g id="art" fill="none" stroke-linejoin="round" stroke-linecap="round">
+      <!-- cube outline, hidden back edges and the near corner -->
+      <path d="M128 128 L128 28 M128 128 L41.4 178 M128 128 L214.6 178" stroke-width="3" stroke-dasharray="2 7" opacity=".55"/>
+      <path d="M41.4 78 L128 128 L214.6 78 M128 128 L128 228" stroke-width="5" opacity=".7"/>
+      <path d="M128 28 L214.6 78 L214.6 178 L128 228 L41.4 178 L41.4 78 Z" stroke-width="6"/>
+    </g>
+    <g id="head" fill="#06151a" stroke-linejoin="round" stroke-linecap="round">
+      <!-- hat and face as one silhouette, facing left -->
+      <path stroke-width="5"
+        d="M108 98 C106 72 114 58 134 58 C154 58 162 72 160 98
+           C182 99 192 102 192 106 C192 111 178 113 168 113
+           C174 124 177 142 172 162 L178 198 L118 198 L114 172 L102 169 L95 160 L98 152 L94 148 L96 140
+           L86 136 L96 122 L96 113 C86 113 70 111 70 106 C70 102 82 99 108 98 Z"/>
+      <path d="M96 113 C120 116 150 116 168 113" fill="none" stroke-width="4"/>
+      <path d="M110 138 C102 144 116 150 108 156 C100 162 114 168 106 174" fill="none" stroke-width="4"/>
+    </g>
+  </defs>
+  <rect width="256" height="256" rx="44" fill="url(#bg)"/>
+  <use href="#art" stroke="#19d7ee" filter="url(#glow)" opacity=".9"/>
+  <use href="#art" stroke="#7df4ff"/>
+  <use href="#head" stroke="#19d7ee" filter="url(#glow)" opacity=".9"/>
+  <use href="#head" stroke="#7df4ff"/>
+</svg>

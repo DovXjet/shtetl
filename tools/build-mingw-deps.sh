@@ -6,7 +6,7 @@
 #
 #   tools/build-mingw-deps.sh
 #
-# Env overrides: MINGW_DEPS_PREFIX, VSG_TAG, VSGXCHANGE_TAG, ASSIMP_TAG,
+# Env overrides: MINGW_DEPS_PREFIX, VSG_TAG, VSGXCHANGE_TAG, ASSIMP_TAG, SPDLOG_TAG,
 # MINGW_DEPS_SRC (where sources are cloned/built, default ~/.cache/shtetl-mingw).
 set -euo pipefail
 
@@ -17,6 +17,7 @@ SRC=${MINGW_DEPS_SRC:-$HOME/.cache/shtetl-mingw/src}
 VSG_TAG=${VSG_TAG:-v1.1.16}
 VSGXCHANGE_TAG=${VSGXCHANGE_TAG:-v1.1.14}
 ASSIMP_TAG=${ASSIMP_TAG:-v5.4.3}
+SPDLOG_TAG=${SPDLOG_TAG:-v1.15.3}
 SYSROOT=/usr/x86_64-w64-mingw32/sys-root/mingw
 
 mkdir -p "$SRC" "$MINGW_DEPS_PREFIX"
@@ -63,4 +64,8 @@ build vsgXchange "${VULKAN_ARGS[@]}" -DBUILD_SHARED_LIBS=ON \
   -DCMAKE_DISABLE_FIND_PACKAGE_CURL=ON \
   -DCMAKE_DISABLE_FIND_PACKAGE_OpenImageIO=ON
 
-echo "Installed vsg, vsgXchange and assimp into $MINGW_DEPS_PREFIX"
+fetch spdlog https://github.com/gabime/spdlog.git "$SPDLOG_TAG"
+build spdlog -DSPDLOG_BUILD_EXAMPLE=OFF -DSPDLOG_BUILD_TESTS=OFF \
+  -DSPDLOG_BUILD_SHARED=OFF
+
+echo "Installed vsg, vsgXchange, spdlog and assimp into $MINGW_DEPS_PREFIX"

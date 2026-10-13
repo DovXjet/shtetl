@@ -4,6 +4,7 @@
   "description": "Simple 3D model viewer with a thumbnail browser (Qt/VSG)",
   "builtin-baseline": "b472291f295551b7127359ea38fdd2ca092f6f1b",
   "dependencies": [
+    "spdlog",
     {
       "name": "vsg",
       "features": [

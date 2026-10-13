@@ -30,6 +30,8 @@ InstallDirRegKey HKLM "Software\shtetl" ""
 
 !define UNINST_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\shtetl"
 
+!define MUI_ICON "..\resources\icons\shtetl.ico"
+!define MUI_UNICON "..\resources\icons\shtetl.ico"
 !define MUI_FINISHPAGE_NOAUTOCLOSE
 !define MUI_UNFINISHPAGE_NOAUTOCLOSE
 
