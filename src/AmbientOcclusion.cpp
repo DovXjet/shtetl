@@ -31,7 +31,7 @@ namespace
   // An offscreen render graph with the given color targets, which the later
   // passes sample, and a depth buffer of its own. Reverse z, as the window's.
   vsg::ref_ptr<vsg::RenderGraph> createOffscreenGraph(vsg::ref_ptr<vsg::Device> device, const VkExtent2D& extent, const std::vector<VkFormat>& formats,
-                                                      std::vector<vsg::ref_ptr<vsg::ImageInfo>>& images)
+                                                      std::vector<vsg::ref_ptr<vsg::ImageInfo>>& images, VkFilter filter = VK_FILTER_NEAREST)
   {
     const VkExtent3D attachmentExtent{extent.width, extent.height, 1};
     std::vector<vsg::ref_ptr<vsg::ImageView>> views;
@@ -53,8 +53,8 @@ namespace
       views.push_back(view);
 
       auto sampler = vsg::Sampler::create();
-      sampler->magFilter = VK_FILTER_NEAREST;
-      sampler->minFilter = VK_FILTER_NEAREST;
+      sampler->magFilter = filter;
+      sampler->minFilter = filter;
       sampler->mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
       sampler->addressModeU = sampler->addressModeV = sampler->addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
       sampler->maxAnisotropy = 1.0f;
@@ -196,7 +196,7 @@ namespace
   }
 } // namespace
 
-AmbientOcclusion::AmbientOcclusion(vsg::ref_ptr<vsg::Device> device, vsg::ref_ptr<vsg::Camera> camera, vsg::ref_ptr<vsg::Node> scene, VkExtent2D extent, double radius)
+AmbientOcclusion::AmbientOcclusion(vsg::ref_ptr<vsg::Device> device, vsg::ref_ptr<vsg::Camera> camera, vsg::ref_ptr<vsg::Node> scene, VkExtent2D extent, double radius, vsg::vec3 background)
     : m_Camera(camera), m_Extent(extent)
 {
   m_SsaoParams = vsg::Value<SsaoParams>::create();
@@ -204,6 +204,7 @@ AmbientOcclusion::AmbientOcclusion(vsg::ref_ptr<vsg::Device> device, vsg::ref_pt
   m_SsaoParams->value().radius = static_cast<float>(radius);
   m_CompositionParams = vsg::Value<CompositionParams>::create();
   m_CompositionParams->properties.dataVariance = vsg::DYNAMIC_DATA;
+  m_CompositionParams->value().background = vsg::vec4(background, 1.0f);
   updateProjection();
 
   // The random rotations of the kernel around each normal, tiled over the
@@ -254,10 +255,15 @@ AmbientOcclusion::AmbientOcclusion(vsg::ref_ptr<vsg::Device> device, vsg::ref_pt
   m_BlurGraph = createOffscreenGraph(device, extent, {VK_FORMAT_R8_UNORM}, blurred);
   m_BlurGraph->addChild(vsg::View::create(createFullscreenCamera(extent), createFullscreenPass(":/shaders/ao_blur.frag", {occlusion[0]}, {})));
 
+  // Read by FXAA, which looks between the pixels: filtered.
+  std::vector<vsg::ref_ptr<vsg::ImageInfo>> composed;
+  m_CompositionGraph = createOffscreenGraph(device, extent, {VK_FORMAT_R8G8B8A8_SRGB}, composed, VK_FILTER_LINEAR);
+  m_CompositionGraph->addChild(vsg::View::create(
+      createFullscreenCamera(extent), createFullscreenPass(":/shaders/ao_composite.frag", {gbuffer[0], gbuffer[2], blurred[0]},
+                                                           {vsg::DescriptorBuffer::create(m_CompositionParams, 3, 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER)})));
+
   m_CompositionCamera = createFullscreenCamera(extent);
-  m_CompositionView = vsg::View::create(
-      m_CompositionCamera, createFullscreenPass(":/shaders/ao_composite.frag", {gbuffer[0], gbuffer[2], blurred[0]},
-                                                {vsg::DescriptorBuffer::create(m_CompositionParams, 3, 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER)}));
+  m_CompositionView = vsg::View::create(m_CompositionCamera, createFullscreenPass(":/shaders/ao_fxaa.frag", {composed[0]}, {}));
 }
 
 void AmbientOcclusion::setStrength(float strength)

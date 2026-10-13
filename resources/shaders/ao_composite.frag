@@ -1,8 +1,7 @@
 #version 450
 
-// The last pass of the ambient occlusion mode: the lit color of the G-buffer
-// darkened by the occlusion, on the swapchain. The background is left alone,
-// as it is cleared there.
+// The composition of the ambient occlusion mode: the lit color of the G-buffer
+// darkened by the occlusion, on a target that the FXAA pass then reads.
 
 layout(binding = 0) uniform sampler2D samplerPosition;
 layout(binding = 1) uniform sampler2D samplerColor;
@@ -13,6 +12,7 @@ layout(binding = 3) uniform UBO
     float pad0;
     float pad1;
     float pad2;
+    vec4 background; // where there is no geometry
 } ubo;
 
 layout(location = 0) in vec2 inUV;
@@ -20,7 +20,11 @@ layout(location = 0) out vec4 outFragColor;
 
 void main()
 {
-    if (texture(samplerPosition, inUV).a >= 0.0) discard;
+    if (texture(samplerPosition, inUV).a >= 0.0)
+    {
+        outFragColor = ubo.background;
+        return;
+    }
     vec3 color = texture(samplerColor, inUV).rgb;
     float ao = texture(samplerAO, inUV).r;
     outFragColor = vec4(color * mix(1.0, ao, clamp(ubo.strength, 0.0, 1.0)), 1.0);

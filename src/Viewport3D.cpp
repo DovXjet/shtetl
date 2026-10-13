@@ -167,6 +167,8 @@ Viewport3D::Viewport3D(QWidget* parent) : QWidget(parent)
 {
   m_Traits = vsg::WindowTraits::create();
   m_Traits->windowTitle = "shtetl";
+  // Multisampled (a device that can't do this many gets the most it can).
+  m_Traits->samples = VK_SAMPLE_COUNT_4_BIT;
 
   auto viewer = COnDemandViewer::create(8);
   // On-demand rendering: camera interaction calls request() itself.
@@ -403,7 +405,7 @@ void Viewport3D::buildSceneGraph()
     auto gbufferScene = vsg::Group::create();
     gbufferScene->addChild(makeCompactGBufferNode(m_Compact));
     const VkExtent2D occlusionExtent = m_PixelExtent.width > 0 ? m_PixelExtent : extent;
-    m_Occlusion = AmbientOcclusion::create(device, m_Camera, gbufferScene, occlusionExtent, m_FitRadius * AmbientOcclusionRadius);
+    m_Occlusion = AmbientOcclusion::create(device, m_Camera, gbufferScene, occlusionExtent, m_FitRadius * AmbientOcclusionRadius, Background);
     m_Occlusion->setStrength(AmbientOcclusionStrength);
     m_OcclusionUpdater = AmbientOcclusionUpdater::create();
     m_OcclusionUpdater->occlusion = m_Occlusion;

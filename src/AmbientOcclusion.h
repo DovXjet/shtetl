@@ -11,10 +11,11 @@
 //   SSAO      the occlusion of each pixel, from the position and normal
 //   blur      removes the noise of the SSAO pass
 //
-// and the composition, a fullscreen view in the window that darkens the lit
-// color by the occlusion. The caller puts renderGraphs() into the command
-// graph ahead of the window's render graph, and compositionView() into the
-// window's.
+// the composition, which darkens the lit color by the occlusion, and FXAA
+// (the multisampling of the window does not reach these passes), whose
+// fullscreen view is the one in the window. The caller puts renderGraphs()
+// into the command graph ahead of the window's render graph, and
+// compositionView() into the window's.
 //
 // Everything depends on the size of the window: make a new one when it changes.
 class AmbientOcclusion : public vsg::Inherit<vsg::Object, AmbientOcclusion>
@@ -23,9 +24,9 @@ class AmbientOcclusion : public vsg::Inherit<vsg::Object, AmbientOcclusion>
     // `scene` is what the G-buffer pass draws; `camera` is the one of the
     // window, whose view and projection the passes follow. `radius` is the
     // reach of the occlusion in the units of the model.
-    AmbientOcclusion(vsg::ref_ptr<vsg::Device> device, vsg::ref_ptr<vsg::Camera> camera, vsg::ref_ptr<vsg::Node> scene, VkExtent2D extent, double radius);
+    AmbientOcclusion(vsg::ref_ptr<vsg::Device> device, vsg::ref_ptr<vsg::Camera> camera, vsg::ref_ptr<vsg::Node> scene, VkExtent2D extent, double radius, vsg::vec3 background);
 
-    std::vector<vsg::ref_ptr<vsg::RenderGraph>> renderGraphs() const { return {m_GBufferGraph, m_SsaoGraph, m_BlurGraph}; }
+    std::vector<vsg::ref_ptr<vsg::RenderGraph>> renderGraphs() const { return {m_GBufferGraph, m_SsaoGraph, m_BlurGraph, m_CompositionGraph}; }
     vsg::ref_ptr<vsg::View> compositionView() const { return m_CompositionView; }
     // The camera of the composition: its viewport has to follow the window.
     vsg::ref_ptr<vsg::Camera> compositionCamera() const { return m_CompositionCamera; }
@@ -49,13 +50,14 @@ class AmbientOcclusion : public vsg::Inherit<vsg::Object, AmbientOcclusion>
     {
         float strength = 0.5f;
         float pad0 = 0.0f, pad1 = 0.0f, pad2 = 0.0f;
+        vsg::vec4 background;
     };
 
     vsg::ref_ptr<vsg::Camera> m_Camera;
     VkExtent2D m_Extent;
     vsg::ref_ptr<vsg::Value<SsaoParams>> m_SsaoParams;
     vsg::ref_ptr<vsg::Value<CompositionParams>> m_CompositionParams;
-    vsg::ref_ptr<vsg::RenderGraph> m_GBufferGraph, m_SsaoGraph, m_BlurGraph;
+    vsg::ref_ptr<vsg::RenderGraph> m_GBufferGraph, m_SsaoGraph, m_BlurGraph, m_CompositionGraph;
     vsg::ref_ptr<vsg::View> m_CompositionView;
     vsg::ref_ptr<vsg::Camera> m_CompositionCamera;
 };
