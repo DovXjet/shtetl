@@ -7,6 +7,9 @@
 #include "QtAwesome.h"
 
 #ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
 #include <shlobj.h>
 #include <windows.h>
 #endif

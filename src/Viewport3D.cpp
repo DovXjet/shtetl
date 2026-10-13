@@ -254,9 +254,27 @@ void Viewport3D::loadModel(const QString& path)
 {
   // Loaded on the side, so that a bad file leaves the current model in place.
   LoadedModel loaded = ::loadModel(path, m_Options);
+  // Keep the view orientation across models; only the framing is refit.
+  auto previous = m_Model && m_Camera ? m_Camera->viewMatrix.cast<vsg::LookAt>() : nullptr;
+  vsg::dvec3 toEye, up;
+  if (previous)
+  {
+    toEye = previous->eye - previous->center;
+    up = previous->up;
+  }
+
   m_Model = loaded.node;
   m_ModelBounds = loaded.bounds;
   buildSceneGraph();
+
+  if (previous && vsg::length(toEye) > 0.0)
+  {
+    if (auto lookAt = m_Camera->viewMatrix.cast<vsg::LookAt>())
+    {
+      lookAt->eye = lookAt->center + toEye;
+      lookAt->up = up;
+    }
+  }
   fitAll(false);
 }
 

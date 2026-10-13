@@ -3,7 +3,7 @@
 #include <vsg/io/read.h>
 #include <vsg/io/VSG.h>
 #include <vsgXchange/all.h>
-#include <vsgXchange/assimp.h>
+#include <vsgXchange/models.h>
 #include <vsgXchange/gltf.h>
 
 #include <QFileInfo>
