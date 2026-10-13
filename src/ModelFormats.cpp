@@ -4,7 +4,6 @@
 #include <vsg/io/VSG.h>
 #include <vsgXchange/all.h>
 #include <vsgXchange/models.h>
-#include <vsgXchange/assimp.h>
 #include <vsgXchange/gltf.h>
 
 #include <QFileInfo>
