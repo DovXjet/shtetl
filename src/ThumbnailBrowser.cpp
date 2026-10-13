@@ -10,6 +10,7 @@
 #include <QPainter>
 #include <QPainterPath>
 #include <QSettings>
+#include <QSignalBlocker>
 #include <QSlider>
 #include <QStandardItemModel>
 #include <QToolButton>
@@ -182,7 +183,7 @@ void ThumbnailBrowser::selectFile(const QString& path)
   m_View->scrollTo(it.value()->index());
 }
 
-QString ThumbnailBrowser::adjacentFile(int delta) const
+QString ThumbnailBrowser::adjacentFile(int delta, const QString& from) const
 {
   QStringList files;
   for (int row = 0; row < m_Model->rowCount(); ++row)
@@ -191,9 +192,21 @@ QString ThumbnailBrowser::adjacentFile(int delta) const
     if (!index.data(IsDirRole).toBool()) files << index.data(PathRole).toString();
   }
   if (files.isEmpty()) return {};
-  const int at = files.indexOf(currentFile());
+  const int at = files.indexOf(from);
   const int next = at < 0 ? (delta > 0 ? 0 : files.size() - 1) : (at + delta % files.size() + files.size()) % files.size();
   return files[next];
+}
+
+void ThumbnailBrowser::removeFiles(const QStringList& paths)
+{
+  const QSignalBlocker blocker(m_View->selectionModel());
+  for (const QString& path : paths)
+  {
+    auto it = m_Items.find(QFileInfo(path).absoluteFilePath());
+    if (it == m_Items.end()) continue;
+    m_Model->removeRow(it.value()->row());
+    m_Items.erase(it);
+  }
 }
 
 void ThumbnailBrowser::onActivated(const QModelIndex& index)
@@ -215,5 +228,9 @@ void ThumbnailBrowser::onThumbnailReady(const QString& path, const QImage& image
 {
   auto it = m_Items.find(path);
   if (it == m_Items.end()) return; // another directory's, or another browser's
-  it.value()->setIcon(image.isNull() ? placeholderIcon("?") : QIcon(QPixmap::fromImage(image)));
+  // No thumbnail means the file could not be loaded: it is not a model we support.
+  if (image.isNull())
+    removeFiles({path});
+  else
+    it.value()->setIcon(QIcon(QPixmap::fromImage(image)));
 }

@@ -29,9 +29,8 @@ find_package(vsg CONFIG REQUIRED)
 find_package(vsgXchange CONFIG REQUIRED)
 find_package(spdlog CONFIG REQUIRED)
 find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets)
-# QZipReader (private) reads the zip of a 3MF file.
-set(QT_NO_PRIVATE_MODULE_WARNING ON)
-find_package(Qt6 REQUIRED COMPONENTS GuiPrivate)
+# libzip reads the zip of a 3MF file (ZIP64 too, which QZipReader cannot).
+find_package(libzip CONFIG REQUIRED)
 find_package(OpenMP QUIET)
 
 # The system-wide vsgQt install (/usr/local) was built against Qt5, so build
@@ -93,7 +92,14 @@ qt_add_resources(shtetl shaders PREFIX / BASE resources FILES resources/shaders/
 # The application logo (window icon; the .ico is embedded by resources/shtetl.rc).
 qt_add_resources(shtetl icons PREFIX / BASE resources FILES resources/icons/shtetl.png resources/icons/shtetl-about.png)
 
-target_link_libraries(shtetl PRIVATE vsg::vsg vsgXchange::vsgXchange vsgQt::vsgQt QtAwesome spdlog::spdlog Qt6::Core Qt6::Gui Qt6::GuiPrivate Qt6::Widgets)
+# libassimp (via vsgXchange) bundles the kuba/zip library, which exports
+# zip_open/zip_close/... under the same names as libzip with an incompatible
+# API (see XjetStudio's src/CMakeLists.txt). Linking libzip first, and keeping
+# it NEEDED, makes its symbols win at run time.
+if(UNIX AND NOT APPLE)
+  target_link_options(shtetl PRIVATE -Wl,--no-as-needed)
+endif()
+target_link_libraries(shtetl PRIVATE libzip::zip vsg::vsg vsgXchange::vsgXchange vsgQt::vsgQt QtAwesome spdlog::spdlog Qt6::Core Qt6::Gui Qt6::Widgets)
 if(OpenMP_CXX_FOUND)
   target_link_libraries(shtetl PRIVATE OpenMP::OpenMP_CXX)
 endif()

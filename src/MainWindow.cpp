@@ -17,6 +17,7 @@
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QLabel>
+#include <QLocale>
 #include <QPixmap>
 #include <QMenuBar>
 #include <QMimeData>
@@ -160,9 +161,9 @@ void MainWindow::createMenus()
 
   // As vgiv's Next/Previous Image.
   auto* next = viewMenu->addAction("Next Model", this, [this]() { goAdjacent(+1); });
-  next->setShortcuts({QKeySequence("Shift+Down"), QKeySequence("Space"), QKeySequence::Forward});
+  next->setShortcuts({QKeySequence("Right"), QKeySequence("Shift+Down"), QKeySequence("Space"), QKeySequence::Forward});
   auto* previous = viewMenu->addAction("Previous Model", this, [this]() { goAdjacent(-1); });
-  previous->setShortcuts({QKeySequence("Shift+Up"), QKeySequence("Backspace"), QKeySequence::Back});
+  previous->setShortcuts({QKeySequence("Left"), QKeySequence("Shift+Up"), QKeySequence("Backspace"), QKeySequence::Back});
 
   auto* helpMenu = menuBar()->addMenu("&Help");
   helpMenu->addAction("About shtetl", this, &MainWindow::showAboutDialog);
@@ -248,9 +249,9 @@ void MainWindow::showDirectory(const QString& path)
   QSettings().setValue("lastDirectory", m_Browser->directory());
 }
 
-void MainWindow::loadModel(const QString& path)
+bool MainWindow::loadModel(const QString& path)
 {
-  if (path.isEmpty()) return;
+  if (path.isEmpty()) return false;
   try
   {
     spdlog::info("Loading {}", path.toStdString());
@@ -260,14 +261,21 @@ void MainWindow::loadModel(const QString& path)
   {
     spdlog::error("Failed to load {}: {}", path.toStdString(), e.what());
     statusBar()->showMessage(QString("Failed to load %1: %2").arg(QFileInfo(path).fileName(), e.what()));
-    return;
+    return false;
   }
   spdlog::info("Loaded {}", path.toStdString());
   m_CurrentFile = path;
   m_CopyAction->setEnabled(true);
   setWindowTitle(QFileInfo(path).fileName() + " - shtetl");
-  statusBar()->showMessage(path);
+  const vsg::dvec3 size = m_Viewport->modelBounds().max - m_Viewport->modelBounds().min;
+  statusBar()->showMessage(QString("%1  |  %2 x %3 x %4  |  %5")
+                               .arg(path)
+                               .arg(size.x, 0, 'f', 2)
+                               .arg(size.y, 0, 'f', 2)
+                               .arg(size.z, 0, 'f', 2)
+                               .arg(QLocale().formattedDataSize(QFileInfo(path).size())));
   addRecent(path);
+  return true;
 }
 
 // The file goes on the clipboard as a file URL (text/uri-list), which is how
@@ -290,8 +298,20 @@ void MainWindow::copyToClipboard()
 
 void MainWindow::goAdjacent(int delta)
 {
-  const QString next = m_Browser->adjacentFile(delta);
-  if (!next.isEmpty()) m_Browser->selectFile(next);
+  // Files that fail to load are skipped silently, and dropped from the list.
+  QStringList failed;
+  QString from = m_Browser->currentFile();
+  for (;;)
+  {
+    const QString next = m_Browser->adjacentFile(delta, from);
+    if (next.isEmpty() || next == m_CurrentFile || failed.contains(next)) break;
+    m_Browser->selectFile(next); // loads it
+    if (m_CurrentFile == next) break;
+    failed << next;
+    from = next;
+  }
+  m_Browser->removeFiles(failed);
+  if (!failed.isEmpty()) m_Browser->selectFile(m_CurrentFile); // back on the model shown
 }
 
 void MainWindow::reload()

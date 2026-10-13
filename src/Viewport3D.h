@@ -54,6 +54,8 @@ class Viewport3D : public QWidget
     // case the current model stays.
     void loadModel(const QString& path);
     void clearModel();
+    // Bounds of the model shown, in its own coordinates.
+    vsg::dbox modelBounds() const { return m_ModelBounds; }
 
     // Mouse button mapping and rotation feel (see NavigationStyles.h).
     void setNavigationStyle(NavigationStyle style);

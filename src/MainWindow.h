@@ -27,7 +27,7 @@ class MainWindow : public QMainWindow
     void copyToClipboard();
     void openFileDialog();
     void openDirectoryDialog();
-    void loadModel(const QString& path);
+    bool loadModel(const QString& path); // false: not loaded, the previous model stays
     void showDirectory(const QString& path);
     void goAdjacent(int delta);
     void reload();

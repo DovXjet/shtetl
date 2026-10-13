@@ -32,7 +32,12 @@ class ThumbnailBrowser : public QWidget
     QString currentFile() const;
     void selectFile(const QString& path);
     // The model file `delta` places after the current one (wraps around), or empty.
-    QString adjacentFile(int delta) const;
+    QString adjacentFile(int delta) const { return adjacentFile(delta, currentFile()); }
+    // The same, counted from `from`.
+    QString adjacentFile(int delta, const QString& from) const;
+    // Drops files from the list (those that turned out not to be loadable)
+    // without changing the selection or loading anything.
+    void removeFiles(const QStringList& paths);
 
   signals:
     // The current model changed (click or arrow keys).

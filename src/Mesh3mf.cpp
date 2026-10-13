@@ -2,9 +2,10 @@
 
 #include <QXmlStreamReader>
 
-#include <private/qzipreader_p.h>
+#include <zip.h>
 
 #include <map>
+#include <memory>
 #include <stdexcept>
 
 // A reader of the geometry of 3MF files (the 3D Manufacturing Format core
@@ -90,26 +91,56 @@ namespace
   }
 } // namespace
 
+namespace
+{
+  // libzip, as in XjetStudio: unlike Qt's QZipReader it reads ZIP64 archives,
+  // which Netfabb and XjetStudio write for every 3MF file.
+  struct ZipCloser
+  {
+    void operator()(zip_t* zip) const { zip_discard(zip); }
+  };
+  using ZipArchive = std::unique_ptr<zip_t, ZipCloser>;
+
+  QByteArray readEntry(zip_t* zip, zip_int64_t index)
+  {
+    zip_stat_t st;
+    if (zip_stat_index(zip, static_cast<zip_uint64_t>(index), 0, &st) != 0 || !(st.valid & ZIP_STAT_SIZE)) return {};
+    std::unique_ptr<zip_file_t, int (*)(zip_file_t*)> file(zip_fopen_index(zip, static_cast<zip_uint64_t>(index), 0), zip_fclose);
+    if (!file) return {};
+    QByteArray data(static_cast<qsizetype>(st.size), Qt::Uninitialized);
+    zip_int64_t done = 0;
+    while (done < static_cast<zip_int64_t>(st.size))
+    {
+      const zip_int64_t n = zip_fread(file.get(), data.data() + done, st.size - static_cast<zip_uint64_t>(done));
+      if (n <= 0) return {};
+      done += n;
+    }
+    return data;
+  }
+} // namespace
+
 IndexedMesh read3MF(const QString& path)
 {
-  QZipReader zip(path);
-  if (!zip.isReadable()) throw std::runtime_error("Cannot read " + path.toStdString() + " as a 3MF (zip) file");
+  int zipError = 0;
+  const QByteArray utf8Path = path.toUtf8();
+  ZipArchive zip(zip_open(utf8Path.constData(), ZIP_RDONLY, &zipError));
+  if (!zip) throw std::runtime_error("Cannot read " + path.toStdString() + " as a 3MF (zip) file");
 
   // The model part is "3D/3dmodel.model" in practice; otherwise take the first .model.
-  QString modelPath = "3D/3dmodel.model";
-  QByteArray xml = zip.fileData(modelPath);
-  if (xml.isEmpty())
-  {
-    modelPath.clear();
-    for (const auto& info : zip.fileInfoList())
-      if (info.isFile && info.filePath.endsWith(".model", Qt::CaseInsensitive))
+  zip_int64_t modelIndex = zip_name_locate(zip.get(), "3D/3dmodel.model", 0);
+  if (modelIndex < 0)
+    for (zip_int64_t i = 0, n = zip_get_num_entries(zip.get(), 0); i < n; ++i)
+    {
+      const char* name = zip_get_name(zip.get(), static_cast<zip_uint64_t>(i), 0);
+      if (name && QString::fromUtf8(name).endsWith(".model", Qt::CaseInsensitive))
       {
-        modelPath = info.filePath;
+        modelIndex = i;
         break;
       }
-  }
-  if (modelPath.isEmpty()) throw std::runtime_error("No 3D model in " + path.toStdString());
-  xml = zip.fileData(modelPath);
+    }
+  if (modelIndex < 0) throw std::runtime_error("No 3D model in " + path.toStdString());
+  const QByteArray xml = readEntry(zip.get(), modelIndex);
+  if (xml.isEmpty()) throw std::runtime_error("Cannot read the 3D model of " + path.toStdString());
 
   std::map<int, Object> objects;
   std::vector<Component> buildItems;
