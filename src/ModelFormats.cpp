@@ -5,6 +5,10 @@
 #include <vsgXchange/all.h>
 #include <vsgXchange/models.h>
 #include <vsgXchange/gltf.h>
+// Newer vsgXchange no longer includes assimp.h from all.h; older versions don't ship it.
+#if __has_include(<vsgXchange/assimp.h>)
+#include <vsgXchange/assimp.h>
+#endif
 
 #include <QFileInfo>
 
