@@ -1,6 +1,9 @@
 #pragma once
 
+#include <QDateTime>
+#include <QFileSystemWatcher>
 #include <QMainWindow>
+#include <QTimer>
 
 class QAction;
 class QDockWidget;
@@ -31,6 +34,8 @@ class MainWindow : public QMainWindow
     void showDirectory(const QString& path);
     void goAdjacent(int delta);
     void reload();
+    void watchCurrentFile();
+    void autoReload();
     void addRecent(const QString& path);
     void updateRecentMenu();
 
@@ -43,4 +48,13 @@ class MainWindow : public QMainWindow
     QMenu* m_RecentMenu = nullptr;
     QAction* m_CopyAction = nullptr;
     QString m_CurrentFile;
+
+    // Auto reload: the file and its directory are watched (editors and CadQuery
+    // scripts often replace a file rather than write it), changes are debounced,
+    // and unrelated changes in the directory are told apart by time and size.
+    QFileSystemWatcher m_Watcher;
+    QTimer m_ReloadTimer;
+    bool m_AutoReload = false;
+    QDateTime m_LoadedModified;
+    qint64 m_LoadedSize = -1;
 };

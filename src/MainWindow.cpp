@@ -55,6 +55,12 @@ MainWindow::MainWindow()
 
   connect(m_Browser, &ThumbnailBrowser::fileSelected, this, &MainWindow::loadModel);
 
+  m_ReloadTimer.setSingleShot(true);
+  m_ReloadTimer.setInterval(400);
+  connect(&m_ReloadTimer, &QTimer::timeout, this, &MainWindow::autoReload);
+  connect(&m_Watcher, &QFileSystemWatcher::fileChanged, &m_ReloadTimer, qOverload<>(&QTimer::start));
+  connect(&m_Watcher, &QFileSystemWatcher::directoryChanged, &m_ReloadTimer, qOverload<>(&QTimer::start));
+
   // The mouse side buttons are caught for the whole application, as the 3D
   // view is a native window that vsgQt reads its own events from.
   qApp->installEventFilter(this);
@@ -137,6 +143,15 @@ void MainWindow::createMenus()
     QSettings().setValue("View/AmbientOcclusion", on);
   });
   occlusion->setChecked(QSettings().value("View/AmbientOcclusion", false).toBool());
+  auto* autoReload = viewMenu->addAction("Auto Re&load");
+  autoReload->setCheckable(true);
+  autoReload->setStatusTip("Reload the model when its file changes, e.g. when a CadQuery script exports it");
+  connect(autoReload, &QAction::toggled, this, [this](bool on) {
+    m_AutoReload = on;
+    QSettings().setValue("View/AutoReload", on);
+    watchCurrentFile();
+  });
+  autoReload->setChecked(QSettings().value("View/AutoReload", false).toBool());
   viewMenu->addSeparator();
   auto* fit = viewMenu->addAction("Fit to Window", m_Viewport, [this]() { m_Viewport->fitAll(); });
   fit->setShortcuts({QKeySequence("Ctrl+0"), QKeySequence("F")});
@@ -285,7 +300,43 @@ bool MainWindow::loadModel(const QString& path)
                                .arg(size.z, 0, 'f', 2)
                                .arg(QLocale().formattedDataSize(QFileInfo(path).size())));
   addRecent(path);
+  const QFileInfo info(path);
+  m_LoadedModified = info.lastModified();
+  m_LoadedSize = info.size();
+  watchCurrentFile();
   return true;
+}
+
+void MainWindow::watchCurrentFile()
+{
+  const QStringList watched = m_Watcher.files() + m_Watcher.directories();
+  if (!watched.isEmpty()) m_Watcher.removePaths(watched);
+  if (!m_AutoReload || m_CurrentFile.isEmpty()) return;
+  m_Watcher.addPath(m_CurrentFile);
+  m_Watcher.addPath(QFileInfo(m_CurrentFile).absolutePath());
+}
+
+void MainWindow::autoReload()
+{
+  if (!m_AutoReload || m_CurrentFile.isEmpty()) return;
+  const QFileInfo info(m_CurrentFile);
+  // A replaced file drops off the watch list; it is watched again either way.
+  if (!info.exists())
+  {
+    watchCurrentFile();
+    return;
+  }
+  if (info.lastModified() == m_LoadedModified && info.size() == m_LoadedSize)
+  {
+    watchCurrentFile();
+    return;
+  }
+  // A half-written file fails to load and keeps the current model; the write
+  // finishing changes the file again, and so triggers the next attempt.
+  m_LoadedModified = info.lastModified();
+  m_LoadedSize = info.size();
+  loadModel(m_CurrentFile);
+  watchCurrentFile();
 }
 
 // The file goes on the clipboard as a file URL (text/uri-list), which is how

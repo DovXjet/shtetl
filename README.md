@@ -50,6 +50,7 @@ if there is no thumbnail of ours.
 | Ctrl+Shift+O | Open a directory |
 | Ctrl+C | Copy the model file to the clipboard (paste it into XjetStudio, or a file manager) |
 | F5 | Reload |
+| View > Auto Reload | Reload the model whenever its file changes (e.g. a CadQuery export) |
 | F, Ctrl+0 | Fit the model to the window |
 | Numpad 5 | Perspective / orthographic |
 | 7 / 1 / 3 (or Home / End / PgDn) | Top / front / right view |
