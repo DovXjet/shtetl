@@ -2,7 +2,7 @@
 
 #include "ModelFormats.h"
 #include "NavigationStyles.h"
-#include "OpenModelDialog.h"
+#include "OpenFileDialog.h"
 #include "ThumbnailBrowser.h"
 #include "ThumbnailService.h"
 #include "Viewport3D.h"
@@ -16,6 +16,7 @@
 #include <QFileInfo>
 #include <QLabel>
 #include <QMenuBar>
+#include <QMouseEvent>
 #include <QMessageBox>
 #include <QSettings>
 #include <QStatusBar>
@@ -48,6 +49,10 @@ MainWindow::MainWindow()
 
   connect(m_Browser, &ThumbnailBrowser::fileSelected, this, &MainWindow::loadModel);
 
+  // The mouse side buttons are caught for the whole application, as the 3D
+  // view is a native window that vsgQt reads its own events from.
+  qApp->installEventFilter(this);
+
   createMenus();
   statusBar()->showMessage("Open a model or a directory");
 
@@ -57,10 +62,28 @@ MainWindow::MainWindow()
 
 MainWindow::~MainWindow()
 {
+  qApp->removeEventFilter(this);
   // Stops the thumbnail thread, which renders on the viewport's device,
   // before the viewport (and the device) is destroyed.
   delete m_Service;
   m_Service = nullptr;
+}
+
+// The mouse's Forward and Back (side) buttons step to the next and previous
+// model, wherever in the window the pointer is.
+bool MainWindow::eventFilter(QObject* watched, QEvent* event)
+{
+  const auto type = event->type();
+  if ((type == QEvent::MouseButtonPress || type == QEvent::MouseButtonRelease || type == QEvent::MouseButtonDblClick) && QApplication::activeWindow() == this)
+  {
+    const Qt::MouseButton button = static_cast<QMouseEvent*>(event)->button();
+    if (button == Qt::BackButton || button == Qt::ForwardButton)
+    {
+      if (type == QEvent::MouseButtonPress) goAdjacent(button == Qt::ForwardButton ? +1 : -1);
+      return true; // the trackball must not see them
+    }
+  }
+  return QMainWindow::eventFilter(watched, event);
 }
 
 void MainWindow::createMenus()
@@ -125,9 +148,9 @@ void MainWindow::createMenus()
 
   // As vgiv's Next/Previous Image.
   auto* next = viewMenu->addAction("Next Model", this, [this]() { goAdjacent(+1); });
-  next->setShortcuts({QKeySequence("Shift+Down"), QKeySequence("Space")});
+  next->setShortcuts({QKeySequence("Shift+Down"), QKeySequence("Space"), QKeySequence::Forward});
   auto* previous = viewMenu->addAction("Previous Model", this, [this]() { goAdjacent(-1); });
-  previous->setShortcuts({QKeySequence("Shift+Up"), QKeySequence("Backspace")});
+  previous->setShortcuts({QKeySequence("Shift+Up"), QKeySequence("Backspace"), QKeySequence::Back});
 
   auto* helpMenu = menuBar()->addMenu("&Help");
   helpMenu->addAction("About shtetl", this, &MainWindow::showAboutDialog);
@@ -181,8 +204,11 @@ void MainWindow::openPath(const QString& path)
 
 void MainWindow::openFileDialog()
 {
-  OpenModelDialog dialog(m_Service, m_Browser->directory(), this);
-  if (dialog.exec() == QDialog::Accepted && !dialog.selectedFile().isEmpty()) openPath(dialog.selectedFile());
+  QSettings settings;
+  shtetl::OpenFileDialog dialog(this, &settings, m_Service);
+  dialog.setDirectory(m_Browser->directory());
+  if (dialog.exec() != QDialog::Accepted || dialog.selectedFiles().isEmpty()) return;
+  openPath(dialog.selectedFiles().first());
 }
 
 void MainWindow::openDirectoryDialog()

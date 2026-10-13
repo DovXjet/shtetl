@@ -47,7 +47,7 @@ if there is no thumbnail of ours.
 | F, Ctrl+0 | Fit the model to the window |
 | Numpad 5 | Perspective / orthographic |
 | 7 / 1 / 3 (or Home / End / PgDn) | Top / front / right view |
-| Space, Shift+Down / Backspace, Shift+Up | Next / previous model |
+| Space, Shift+Down, Forward (Alt+Right), mouse Forward / Backspace, Shift+Up, Back (Alt+Left), mouse Back | Next / previous model |
 | Ctrl+M | Show or hide the menu bar |
 | F9 | Show or hide the thumbnail dock |
 | Q, Ctrl+Q | Quit |

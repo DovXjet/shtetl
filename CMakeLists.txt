@@ -51,6 +51,10 @@ FetchContent_Declare(vsgQt
 )
 FetchContent_MakeAvailable(vsgQt)
 
+# QtAwesome (MIT) themes the icons of the Open dialog. EXCLUDE_FROM_ALL: it
+# installs its own library and export set, which has no business in our prefix.
+add_subdirectory(third_party/QtAwesome EXCLUDE_FROM_ALL)
+
 add_executable(shtetl
   src/main.cpp
   src/MainWindow.cpp
@@ -62,7 +66,7 @@ add_executable(shtetl
   src/ThumbnailRenderer.cpp
   src/ThumbnailService.cpp
   src/ThumbnailBrowser.cpp
-  src/OpenModelDialog.cpp
+  src/OpenFileDialog.cpp
 )
 target_include_directories(shtetl PRIVATE src)
 if(WIN32)
@@ -85,7 +89,7 @@ qt_add_resources(shtetl cube_gizmo PREFIX / BASE resources FILES ${CUBE_GIZMO_ST
 # The shaders of the compact meshes, compiled by VSG at run time.
 qt_add_resources(shtetl shaders PREFIX / BASE resources FILES resources/shaders/compact_mesh.vert resources/shaders/compact_mesh.frag)
 
-target_link_libraries(shtetl PRIVATE vsg::vsg vsgXchange::vsgXchange vsgQt::vsgQt Qt6::Core Qt6::Gui Qt6::GuiPrivate Qt6::Widgets)
+target_link_libraries(shtetl PRIVATE vsg::vsg vsgXchange::vsgXchange vsgQt::vsgQt QtAwesome Qt6::Core Qt6::Gui Qt6::GuiPrivate Qt6::Widgets)
 if(OpenMP_CXX_FOUND)
   target_link_libraries(shtetl PRIVATE OpenMP::OpenMP_CXX)
 endif()

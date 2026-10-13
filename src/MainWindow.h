@@ -21,6 +21,7 @@ class MainWindow : public QMainWindow
     void openPath(const QString& path);
 
   private:
+    bool eventFilter(QObject* watched, QEvent* event) override;
     void createMenus();
     void showAboutDialog();
     void openFileDialog();
