@@ -13,6 +13,7 @@
 #include <QClipboard>
 #include <QDialog>
 #include <QDialogButtonBox>
+#include <QCloseEvent>
 #include <QDockWidget>
 #include <QFileDialog>
 #include <QFileInfo>
@@ -65,10 +66,15 @@ MainWindow::MainWindow()
   // view is a native window that vsgQt reads its own events from.
   qApp->installEventFilter(this);
 
+  const QSettings settings;
+  // Window size/position and the dock's width; the dock's visibility is
+  // applied by createMenus() from its own key.
+  restoreGeometry(settings.value("Window/Geometry").toByteArray());
+  restoreState(settings.value("Window/State").toByteArray());
+
   createMenus();
   statusBar()->showMessage("Open a model or a directory");
 
-  const QSettings settings;
   showDirectory(settings.value("lastDirectory", QDir::homePath()).toString());
 }
 
@@ -79,6 +85,14 @@ MainWindow::~MainWindow()
   // before the viewport (and the device) is destroyed.
   delete m_Service;
   m_Service = nullptr;
+}
+
+void MainWindow::closeEvent(QCloseEvent* event)
+{
+  QSettings settings;
+  settings.setValue("Window/Geometry", saveGeometry());
+  settings.setValue("Window/State", saveState());
+  QMainWindow::closeEvent(event);
 }
 
 // The mouse's Forward and Back (side) buttons step to the next and previous
@@ -124,9 +138,16 @@ void MainWindow::createMenus()
   auto* viewMenu = menuBar()->addMenu("&View");
   // Also added to the window, so its shortcut works - and can bring the menu
   // back - while the menu bar is hidden.
-  auto* menuBarAction = viewMenu->addAction("Menu Bar", this, [this](bool show) { menuBar()->setVisible(show); });
+  // The View checkboxes are remembered between runs.
+  QSettings settings;
+  auto* menuBarAction = viewMenu->addAction("Menu Bar", this, [this](bool show) {
+    menuBar()->setVisible(show);
+    QSettings().setValue("View/MenuBar", show);
+  });
   menuBarAction->setCheckable(true);
-  menuBarAction->setChecked(true);
+  const bool menuBarShown = settings.value("View/MenuBar", true).toBool();
+  menuBarAction->setChecked(menuBarShown);
+  menuBar()->setVisible(menuBarShown);
   menuBarAction->setShortcut(QKeySequence("Ctrl+M"));
   addAction(menuBarAction);
   auto* dockAction = m_BrowserDock->toggleViewAction();
@@ -152,6 +173,8 @@ void MainWindow::createMenus()
     watchCurrentFile();
   });
   autoReload->setChecked(QSettings().value("View/AutoReload", false).toBool());
+  m_BrowserDock->setVisible(settings.value("View/Thumbnails", true).toBool());
+  connect(dockAction, &QAction::toggled, this, [](bool show) { QSettings().setValue("View/Thumbnails", show); });
   viewMenu->addSeparator();
   auto* fit = viewMenu->addAction("Fit to Window", m_Viewport, [this]() { m_Viewport->fitAll(); });
   fit->setShortcuts({QKeySequence("Ctrl+0"), QKeySequence("F")});
@@ -159,11 +182,12 @@ void MainWindow::createMenus()
   ortho->setCheckable(true);
   connect(ortho, &QAction::toggled, m_Viewport, &Viewport3D::setOrthographic);
   connect(m_Viewport, &Viewport3D::projectionChanged, ortho, &QAction::setChecked);
+  connect(m_Viewport, &Viewport3D::projectionChanged, this, [](bool on) { QSettings().setValue("View/Orthographic", on); });
+  ortho->setChecked(settings.value("View/Orthographic", false).toBool());
   viewMenu->addSeparator();
 
   // The 3D interaction flavor: the same presets as XjetStudio and RobotMotion,
   // persisted under the same key.
-  QSettings settings;
   const NavigationStyle current =
       navigationStyleFromName(settings.value("Navigation/Style", QString::fromStdString(navigationStyleName(NavigationStyle::Netfabb))).toString().toStdString());
   m_Viewport->setNavigationStyle(current);

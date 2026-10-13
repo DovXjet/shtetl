@@ -6,6 +6,7 @@
 #include <QTimer>
 
 class QAction;
+class QCloseEvent;
 class QDockWidget;
 class QMenu;
 class ThumbnailBrowser;
@@ -25,6 +26,7 @@ class MainWindow : public QMainWindow
 
   private:
     bool eventFilter(QObject* watched, QEvent* event) override;
+    void closeEvent(QCloseEvent* event) override;
     void createMenus();
     void showAboutDialog();
     void copyToClipboard();
