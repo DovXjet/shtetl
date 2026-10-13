@@ -61,10 +61,10 @@ if exist "%BUILD%\shtetl.pdb" copy /y "%BUILD%\shtetl.pdb" "%~dp0Installshtetl-v
 echo.
 echo Built: %~dp0Installshtetl-v%VERSION%-%SHORTSHA1%.exe
 
-set "DEST=w:\users\Dov\WinInstall"
+set "DEST=w:\users\Dovg\Installers"
 if defined COPY_W (
   if not exist "%DEST%" mkdir "%DEST%"
   copy /y "%~dp0Installshtetl-v%VERSION%-%SHORTSHA1%.exe" "%DEST%\" || exit /b 1
   if exist "%~dp0Installshtetl-v%VERSION%-%SHORTSHA1%.pdb" copy /y "%~dp0Installshtetl-v%VERSION%-%SHORTSHA1%.pdb" "%DEST%\" || exit /b 1
-  echo Copied to %DEST%
+  echo Copied to %DEST%\Installshtetl-v%VERSION%-%SHORTSHA1%.exe
 )
