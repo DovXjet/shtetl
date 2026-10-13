@@ -126,6 +126,11 @@ namespace
   // is sRGB and converts it when it is stored).
   const vsg::vec3 Background{0.033f, 0.033f, 0.133f};
 
+  // The occlusion: how far it reaches (as a fraction of the model's radius)
+  // and how much it darkens.
+  constexpr double AmbientOcclusionRadius = 0.12;
+  constexpr float AmbientOcclusionStrength = 0.85f;
+
 
   // Soft lighting, fixed to the camera as Blender's studio lights are in its
   // solid mode: a good deal of ambient light, a key light from the upper left
@@ -204,6 +209,15 @@ Viewport3D::Viewport3D(QWidget* parent) : QWidget(parent)
 
   m_Viewer->addEventHandler(vsg::CloseHandler::create(m_Viewer));
 
+  // The images of the occlusion have the size of the window: after it has
+  // been resized (and left alone for a moment) they are made anew.
+  m_OcclusionResizeTimer.setSingleShot(true);
+  m_OcclusionResizeTimer.setInterval(150);
+  connect(&m_OcclusionResizeTimer, &QTimer::timeout, this, [this]() {
+    if (m_Occlusion && m_PixelExtent.width > 0 && (m_Occlusion->extent().width != m_PixelExtent.width || m_Occlusion->extent().height != m_PixelExtent.height))
+      rebuildSceneGraph();
+  });
+
   // Compile a valid (if empty) scene graph up front: this is what builds the
   // Vulkan device/surface/swapchain, which the first resize event needs.
   buildSceneGraph();
@@ -247,6 +261,12 @@ void Viewport3D::onContainerResized()
   if (width == 0 || height == 0) return;
   if (m_Camera && m_Camera->viewportState) m_Camera->viewportState->set(0, 0, width, height);
   if (m_Projection) m_Projection->aspectRatio = static_cast<double>(width) / static_cast<double>(height);
+  m_PixelExtent = VkExtent2D{width, height};
+  if (m_Occlusion)
+  {
+    m_Occlusion->compositionCamera()->viewportState->set(0, 0, width, height);
+    if (m_Occlusion->extent().width != width || m_Occlusion->extent().height != height) m_OcclusionResizeTimer.start();
+  }
   m_Viewer->request();
 }
 
@@ -265,6 +285,7 @@ void Viewport3D::loadModel(const QString& path)
 
   m_Model = loaded.node;
   m_ModelBounds = loaded.bounds;
+  m_Compact = loaded.compact;
   buildSceneGraph();
 
   if (previous && vsg::length(toEye) > 0.0)
@@ -282,6 +303,7 @@ void Viewport3D::clearModel()
 {
   m_Model = nullptr;
   m_ModelBounds = vsg::dbox();
+  m_Compact = {};
   buildSceneGraph();
 }
 
@@ -342,6 +364,9 @@ void Viewport3D::buildSceneGraph()
   // Drop the previous trackball and gizmo - they hold the now-stale camera.
   auto& handlers = m_Viewer->getEventHandlers();
   if (m_Trackball) handlers.erase(std::remove(handlers.begin(), handlers.end(), m_Trackball), handlers.end());
+  if (m_OcclusionUpdater) handlers.erase(std::remove(handlers.begin(), handlers.end(), m_OcclusionUpdater), handlers.end());
+  m_Occlusion = nullptr;
+  m_OcclusionUpdater = nullptr;
   if (m_Gizmo)
   {
     handlers.erase(std::remove(handlers.begin(), handlers.end(), m_Gizmo->GetIntersectionHandler()), handlers.end());
@@ -369,16 +394,36 @@ void Viewport3D::buildSceneGraph()
 
   m_Viewer->recordAndSubmitTasks.clear();
   m_Viewer->presentations.clear();
-  auto view = vsg::View::create(m_Camera);
-  view->addChild(root);
   auto view3D = vsg::Group::create();
-  view3D->addChild(view);
+  if (m_AmbientOcclusion && m_Model && m_Compact)
+  {
+    // The model is drawn into the G-buffer by offscreen passes, and the view
+    // of the window is the composition that darkens it by the occlusion.
+    auto device = m_Window->windowAdapter->getOrCreateDevice();
+    auto gbufferScene = vsg::Group::create();
+    gbufferScene->addChild(makeCompactGBufferNode(m_Compact));
+    const VkExtent2D occlusionExtent = m_PixelExtent.width > 0 ? m_PixelExtent : extent;
+    m_Occlusion = AmbientOcclusion::create(device, m_Camera, gbufferScene, occlusionExtent, m_FitRadius * AmbientOcclusionRadius);
+    m_Occlusion->setStrength(AmbientOcclusionStrength);
+    m_OcclusionUpdater = AmbientOcclusionUpdater::create();
+    m_OcclusionUpdater->occlusion = m_Occlusion;
+    m_Viewer->addEventHandler(m_OcclusionUpdater);
+    view3D->addChild(m_Occlusion->compositionView());
+  }
+  else
+  {
+    auto view = vsg::View::create(m_Camera);
+    view->addChild(root);
+    view3D->addChild(view);
+  }
   view3D->addChild(m_Gizmo->GetView());
 
   m_RenderGraph = vsg::RenderGraph::create(m_Window->windowAdapter);
   m_RenderGraph->addChild(view3D);
   m_RenderGraph->setClearValues(VkClearColorValue{{Background.r, Background.g, Background.b, 1.0f}});
   auto commandGraph = vsg::CommandGraph::create(m_Window->windowAdapter);
+  if (m_Occlusion)
+    for (auto& graph : m_Occlusion->renderGraphs()) commandGraph->addChild(graph);
   commandGraph->addChild(m_RenderGraph);
   m_Viewer->assignRecordAndSubmitTaskAndPresentation({commandGraph});
   // A fresh compile manager, as the frames it copies data with were replaced.
@@ -464,6 +509,13 @@ void Viewport3D::fitAll(bool animate)
     lookAt->center = target->center;
   }
   m_Viewer->request();
+}
+
+void Viewport3D::setAmbientOcclusion(bool enabled)
+{
+  if (enabled == m_AmbientOcclusion) return;
+  m_AmbientOcclusion = enabled;
+  if (m_Camera && m_Window && m_Window->windowAdapter) rebuildSceneGraph();
 }
 
 void Viewport3D::setOrthographic(bool orthographic)

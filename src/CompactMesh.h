@@ -13,13 +13,28 @@
 // octahedral encoding - drawn by a shader that decodes them. No index buffer,
 // and no CPU-side copy of the mesh after it is packed.
 
+// What it takes to draw a compact mesh with another pipeline (the G-buffer
+// pass of the ambient occlusion). Empty (no vertices) for other formats.
+struct CompactSource
+{
+    vsg::ref_ptr<vsg::uivec3Array> vertices;
+    vsg::dvec3 boxMin, boxRange;
+    vsg::vec4 diffuse;
+    explicit operator bool() const { return vertices.valid(); }
+};
+
 // A model ready to add to a scene, with its bounds in its own coordinates
 // (vsg::ComputeBounds doesn't understand the packed vertices).
 struct LoadedModel
 {
     vsg::ref_ptr<vsg::Node> node;
     vsg::dbox bounds;
+    CompactSource compact;
 };
+
+// The node that draws a compact mesh into the three targets of the G-buffer
+// (see resources/shaders/compact_mesh_gbuffer.frag).
+vsg::ref_ptr<vsg::Node> makeCompactGBufferNode(const CompactSource& source);
 
 // Loads a model file: STL and 3MF as compact meshes, anything else through
 // vsg::read (vsgXchange). Throws std::runtime_error on failure, and, when

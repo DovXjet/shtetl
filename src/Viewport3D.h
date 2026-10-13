@@ -1,5 +1,7 @@
 #pragma once
 
+#include "AmbientOcclusion.h"
+#include "CompactMesh.h"
 #include "CubeGizmo.h"
 #include "MyTrackball.h"
 #include "NavigationStyles.h"
@@ -11,6 +13,7 @@
 #include <vsg/maths/transform.h>
 
 #include <QString>
+#include <QTimer>
 #include <QWidget>
 
 #include <cmath>
@@ -64,6 +67,12 @@ class Viewport3D : public QWidget
     // Keeps the view direction and frames the whole model ("f" key).
     void fitAll(bool animate = true);
 
+    // Darkens the creases of the model (screen space ambient occlusion, as in
+    // XjetStudio). Only the STL and 3MF models, which are drawn by shtetl's own
+    // shaders, take part; the others are shown as before.
+    void setAmbientOcclusion(bool enabled);
+    bool isAmbientOcclusion() const { return m_AmbientOcclusion; }
+
     void toggleProjection() { setOrthographic(!m_Orthographic); }
     void setOrthographic(bool orthographic);
     bool isOrthographic() const { return m_Orthographic; }
@@ -98,6 +107,14 @@ class Viewport3D : public QWidget
     vsg::ref_ptr<vsg::RenderGraph> m_RenderGraph;
     vsg::ref_ptr<vsg::Node> m_Model;
     vsg::dbox m_ModelBounds;
+    CompactSource m_Compact; // of the model, when it is one
+    bool m_AmbientOcclusion = false;
+    vsg::ref_ptr<AmbientOcclusion> m_Occlusion; // while it is in the scene graph
+    vsg::ref_ptr<AmbientOcclusionUpdater> m_OcclusionUpdater;
+    // The size of the window in pixels, as of the last resize; the occlusion's
+    // images are made at that size, and made anew (after a pause) when it changes.
+    VkExtent2D m_PixelExtent{0, 0};
+    QTimer m_OcclusionResizeTimer;
     vsg::dvec3 m_FitCenter{0.0, 0.0, 0.0};
     double m_FitRadius = 1.0;
     bool m_Orthographic = false;

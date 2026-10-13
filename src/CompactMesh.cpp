@@ -57,10 +57,15 @@ namespace
 
   // The node that draws the packed vertices: the shaders, the state, and the
   // transform that undoes the normalisation of the positions to the box.
-  vsg::ref_ptr<vsg::Node> makeNode(vsg::ref_ptr<vsg::uivec3Array> vertices, const vsg::dvec3& boxMin, const vsg::dvec3& boxRange, const vsg::vec4& diffuse)
+  // `gbuffer` draws into the three targets of the ambient occlusion's G-buffer
+  // instead of the window.
+  vsg::ref_ptr<vsg::Node> makeNode(const CompactSource& source, bool gbuffer)
   {
+    const auto& vertices = source.vertices;
+    const auto& diffuse = source.diffuse;
     auto vertexShader = vsg::ShaderStage::create(VK_SHADER_STAGE_VERTEX_BIT, "main", resourceText(":/shaders/compact_mesh.vert"));
-    auto fragmentShader = vsg::ShaderStage::create(VK_SHADER_STAGE_FRAGMENT_BIT, "main", resourceText(":/shaders/compact_mesh.frag"));
+    auto fragmentShader = vsg::ShaderStage::create(VK_SHADER_STAGE_FRAGMENT_BIT, "main",
+                                                   resourceText(gbuffer ? ":/shaders/compact_mesh_gbuffer.frag" : ":/shaders/compact_mesh.frag"));
     auto shaderSet = vsg::ShaderSet::create(vsg::ShaderStages{vertexShader, fragmentShader});
 
     // The vertex is three uints, not a vec3, and has no other attributes.
@@ -84,6 +89,14 @@ namespace
     rasterization->cullMode = VK_CULL_MODE_NONE;
     config->pipelineStates.push_back(rasterization);
 
+    if (gbuffer) // one blend state per target of the G-buffer
+    {
+      VkPipelineColorBlendAttachmentState attachment{};
+      attachment.blendEnable = VK_FALSE;
+      attachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+      config->pipelineStates.push_back(vsg::ColorBlendState::create(std::vector<VkPipelineColorBlendAttachmentState>(3, attachment)));
+    }
+
     vsg::StateCommands stateCommands;
     config->init();
     config->copyTo(stateCommands);
@@ -99,7 +112,7 @@ namespace
     stateGroup->addChild(draw);
 
     auto decode = vsg::MatrixTransform::create();
-    decode->matrix = vsg::translate(boxMin) * vsg::scale(boxRange);
+    decode->matrix = vsg::translate(source.boxMin) * vsg::scale(source.boxRange);
     decode->addChild(stateGroup);
     return decode;
   }
@@ -173,7 +186,8 @@ namespace
     }
 
     LoadedModel model;
-    model.node = makeNode(vertices, vsg::dvec3(lo.x, lo.y, lo.z), vsg::dvec3(range.x, range.y, range.z), diffuse);
+    model.compact = CompactSource{vertices, vsg::dvec3(lo.x, lo.y, lo.z), vsg::dvec3(range.x, range.y, range.z), diffuse};
+    model.node = makeNode(model.compact, false);
     model.bounds = vsg::dbox(vsg::dvec3(lo.x, lo.y, lo.z), vsg::dvec3(hi.x, hi.y, hi.z));
     return model;
   }
@@ -185,6 +199,11 @@ namespace
     return vsg::vec3(f[0], f[1], f[2]);
   }
 } // namespace
+
+vsg::ref_ptr<vsg::Node> makeCompactGBufferNode(const CompactSource& source)
+{
+  return makeNode(source, true);
+}
 
 LoadedModel loadStl(const QString& path, const std::atomic<bool>* cancel, const vsg::vec4& diffuse)
 {

@@ -63,6 +63,7 @@ add_executable(shtetl
   src/CubeGizmo.cpp
   src/ModelFormats.cpp
   src/CompactMesh.cpp
+  src/AmbientOcclusion.cpp
   src/Mesh3mf.cpp
   src/ThumbnailRenderer.cpp
   src/ThumbnailService.cpp
@@ -88,7 +89,9 @@ endif()
 file(GLOB CUBE_GIZMO_STL CONFIGURE_DEPENDS RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} resources/cube-gizmo/*.stl)
 qt_add_resources(shtetl cube_gizmo PREFIX / BASE resources FILES ${CUBE_GIZMO_STL})
 # The shaders of the compact meshes, compiled by VSG at run time.
-qt_add_resources(shtetl shaders PREFIX / BASE resources FILES resources/shaders/compact_mesh.vert resources/shaders/compact_mesh.frag)
+qt_add_resources(shtetl shaders PREFIX / BASE resources FILES resources/shaders/compact_mesh.vert resources/shaders/compact_mesh.frag
+            resources/shaders/compact_mesh_gbuffer.frag resources/shaders/ao_fullscreen.vert resources/shaders/ao_ssao.frag resources/shaders/ao_blur.frag
+            resources/shaders/ao_composite.frag)
 # The application logo (window icon; the .ico is embedded by resources/shtetl.rc).
 qt_add_resources(shtetl icons PREFIX / BASE resources FILES resources/icons/shtetl.png resources/icons/shtetl-about.png)
 

@@ -127,6 +127,16 @@ void MainWindow::createMenus()
   dockAction->setText("Thumbnails");
   dockAction->setShortcut(QKeySequence("F9"));
   viewMenu->addAction(dockAction);
+  auto* occlusion = viewMenu->addAction("&Ambient Occlusion");
+  occlusion->setCheckable(true);
+  occlusion->setShortcut(QKeySequence("A"));
+  occlusion->setStatusTip("Darken the creases of STL and 3MF models");
+  addAction(occlusion);
+  connect(occlusion, &QAction::toggled, this, [this](bool on) {
+    m_Viewport->setAmbientOcclusion(on);
+    QSettings().setValue("View/AmbientOcclusion", on);
+  });
+  occlusion->setChecked(QSettings().value("View/AmbientOcclusion", false).toBool());
   viewMenu->addSeparator();
   auto* fit = viewMenu->addAction("Fit to Window", m_Viewport, [this]() { m_Viewport->fitAll(); });
   fit->setShortcuts({QKeySequence("Ctrl+0"), QKeySequence("F")});
