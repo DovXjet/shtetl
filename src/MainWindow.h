@@ -24,6 +24,7 @@ class MainWindow : public QMainWindow
     bool eventFilter(QObject* watched, QEvent* event) override;
     void createMenus();
     void showAboutDialog();
+    void copyToClipboard();
     void openFileDialog();
     void openDirectoryDialog();
     void loadModel(const QString& path);
@@ -40,5 +41,6 @@ class MainWindow : public QMainWindow
     ThumbnailBrowser* m_Browser = nullptr;
     QDockWidget* m_BrowserDock = nullptr;
     QMenu* m_RecentMenu = nullptr;
+    QAction* m_CopyAction = nullptr;
     QString m_CurrentFile;
 };

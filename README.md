@@ -13,6 +13,9 @@ through vsgQt.
 - **Choose the 3D interaction flavor** under View > Navigation Style: Netfabb,
   FreeCAD, Blender, Maya, Inventor, SolidWorks, OpenSCAD or touchpad gestures
   (the same presets as XjetStudio and RobotMotion, saved under the same setting).
+- **Edit > Copy** (Ctrl+C) puts the model file on the clipboard, as a file manager
+  does (a file URL, which works on Linux and Windows), so Ctrl+V in XjetStudio
+  adds it as a part.
 - A **menu** in the style of vgiv, with a Menu Bar toggle, recent files, and
   Next/Previous Model to step through the directory.
 
@@ -43,6 +46,7 @@ if there is no thumbnail of ours.
 | --- | --- |
 | Ctrl+O | Open a model (thumbnail dialog) |
 | Ctrl+Shift+O | Open a directory |
+| Ctrl+C | Copy the model file to the clipboard (paste it into XjetStudio, or a file manager) |
 | F5 | Reload |
 | F, Ctrl+0 | Fit the model to the window |
 | Numpad 5 | Perspective / orthographic |

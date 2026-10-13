@@ -9,6 +9,7 @@
 
 #include <QActionGroup>
 #include <QApplication>
+#include <QClipboard>
 #include <QDialog>
 #include <QDialogButtonBox>
 #include <QDockWidget>
@@ -16,11 +17,13 @@
 #include <QFileInfo>
 #include <QLabel>
 #include <QMenuBar>
+#include <QMimeData>
 #include <QMouseEvent>
 #include <QMessageBox>
 #include <QSettings>
 #include <QStatusBar>
 #include <QSysInfo>
+#include <QUrl>
 #include <QVBoxLayout>
 
 namespace
@@ -101,6 +104,13 @@ void MainWindow::createMenus()
   fileMenu->addSeparator();
   auto* quit = fileMenu->addAction("&Quit", qApp, &QApplication::quit);
   quit->setShortcuts({QKeySequence::Quit, QKeySequence("Q")});
+
+  // Copy puts the model file on the system clipboard, as a file manager does,
+  // so that it can be pasted into XjetStudio (as a part), a file manager, ...
+  auto* editMenu = menuBar()->addMenu("&Edit");
+  m_CopyAction = editMenu->addAction("&Copy", QKeySequence::Copy, this, &MainWindow::copyToClipboard);
+  m_CopyAction->setStatusTip("Copy the model file to the clipboard");
+  m_CopyAction->setEnabled(false); // until a model is shown
 
   auto* viewMenu = menuBar()->addMenu("&View");
   // Also added to the window, so its shortcut works - and can bring the menu
@@ -238,9 +248,28 @@ void MainWindow::loadModel(const QString& path)
     return;
   }
   m_CurrentFile = path;
+  m_CopyAction->setEnabled(true);
   setWindowTitle(QFileInfo(path).fileName() + " - shtetl");
   statusBar()->showMessage(path);
   addRecent(path);
+}
+
+// The file goes on the clipboard as a file URL (text/uri-list), which is how
+// Windows Explorer (CF_HDROP, made by Qt from the URL) and the Linux file
+// managers copy files, plus the GNOME/KDE extras and the path as text.
+void MainWindow::copyToClipboard()
+{
+  if (m_CurrentFile.isEmpty()) return;
+  const QUrl url = QUrl::fromLocalFile(m_CurrentFile);
+
+  auto* mime = new QMimeData;
+  mime->setUrls({url});
+  mime->setText(QDir::toNativeSeparators(m_CurrentFile));
+#ifndef Q_OS_WIN
+  mime->setData("x-special/gnome-copied-files", ("copy\n" + url.toEncoded()));
+#endif
+  QApplication::clipboard()->setMimeData(mime);
+  statusBar()->showMessage("Copied " + QFileInfo(m_CurrentFile).fileName() + " to the clipboard", 3000);
 }
 
 void MainWindow::goAdjacent(int delta)
