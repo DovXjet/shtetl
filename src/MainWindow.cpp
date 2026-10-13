@@ -186,7 +186,10 @@ void MainWindow::showAboutDialog()
   };
 
   auto* logo = new QLabel(&dlg);
-  logo->setPixmap(QPixmap(":/icons/shtetl.png").scaled(128, 128, Qt::KeepAspectRatio, Qt::SmoothTransformation));
+  const qreal dpr = dlg.devicePixelRatioF();
+  QPixmap pix = QPixmap(":/icons/shtetl-about.png").scaledToHeight(qRound(160 * dpr), Qt::SmoothTransformation);
+  pix.setDevicePixelRatio(dpr);
+  logo->setPixmap(pix);
   logo->setAlignment(Qt::AlignCenter);
   layout->addWidget(logo);
 

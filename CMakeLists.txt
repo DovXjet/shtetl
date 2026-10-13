@@ -91,7 +91,7 @@ qt_add_resources(shtetl cube_gizmo PREFIX / BASE resources FILES ${CUBE_GIZMO_ST
 # The shaders of the compact meshes, compiled by VSG at run time.
 qt_add_resources(shtetl shaders PREFIX / BASE resources FILES resources/shaders/compact_mesh.vert resources/shaders/compact_mesh.frag)
 # The application logo (window icon; the .ico is embedded by resources/shtetl.rc).
-qt_add_resources(shtetl icons PREFIX / BASE resources FILES resources/icons/shtetl.png)
+qt_add_resources(shtetl icons PREFIX / BASE resources FILES resources/icons/shtetl.png resources/icons/shtetl-about.png)
 
 target_link_libraries(shtetl PRIVATE vsg::vsg vsgXchange::vsgXchange vsgQt::vsgQt QtAwesome spdlog::spdlog Qt6::Core Qt6::Gui Qt6::GuiPrivate Qt6::Widgets)
 if(OpenMP_CXX_FOUND)
