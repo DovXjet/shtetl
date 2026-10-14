@@ -269,16 +269,21 @@ vsg::ref_ptr<vsg::Data> ThumbnailRenderer::render(vsg::ref_ptr<vsg::Node> Scene,
     VkFormat depthFormat = VK_FORMAT_D32_SFLOAT;
 
     // set up the camera
+    // Place the eye far enough that the bounding sphere fits the (vertical) field
+    // of view; the view is square, so it fits horizontally too.
+    constexpr double fovDegrees = 30.0;
+    double sphereRadius = radius * 0.5;
+    double distance = sphereRadius / std::sin(vsg::radians(fovDegrees * 0.5)) * 1.1;
     auto lookAt = vsg::LookAt::create(
-        centre + vsg::dvec3(-radius*0.5, -radius, 0.5*radius)*1.25,
+        centre + vsg::normalize(vsg::dvec3(-0.5, -1.0, 0.5)) * distance,
         centre,
         vsg::dvec3(0.0, 0.0, 1.0));
 
 
     vsg::ref_ptr<vsg::ProjectionMatrix> perspective = vsg::Perspective::create(
-        30.0,
+        fovDegrees,
         1.0 * m_Extent.width / m_Extent.height,
-        nearFarRatio * radius, radius * 4.5);
+        nearFarRatio * radius, distance + sphereRadius * 1.5);
 
     auto camera = vsg::Camera::create(perspective, lookAt, vsg::ViewportState::create(m_Extent));
 
