@@ -64,14 +64,23 @@ namespace
     public:
       std::vector<vsg::ref_ptr<vsg::PbrMaterialValue>> materials;
 
-      void apply(vsg::Object& object) override { object.traverse(*this); }
+      // Scene graphs share nodes, and some loaded ones even contain cycles;
+      // every node is visited once.
+      void apply(vsg::Object& object) override
+      {
+        if (visited.insert(&object).second) object.traverse(*this);
+      }
 
       void apply(vsg::StateGroup& stateGroup) override
       {
+        if (!visited.insert(&stateGroup).second) return;
         for (auto& material : materialsBoundBy(stateGroup))
           if (std::find(materials.begin(), materials.end(), material) == materials.end()) materials.push_back(material);
         stateGroup.traverse(*this);
       }
+
+    private:
+      std::set<const vsg::Object*> visited;
   };
 } // namespace
 
@@ -93,10 +102,14 @@ namespace
   class AddEnvironment : public vsg::Visitor
   {
     public:
-      void apply(vsg::Object& object) override { object.traverse(*this); }
+      void apply(vsg::Object& object) override
+      {
+        if (visited.insert(&object).second) object.traverse(*this);
+      }
 
       void apply(vsg::StateGroup& stateGroup) override
       {
+        if (!visited.insert(&stateGroup).second) return;
         // The pipeline that is bound along with a PBR material is the PBR one.
         const auto materials = materialsBoundBy(stateGroup);
         if (!materials.empty())
@@ -113,6 +126,8 @@ namespace
       int patched = 0;
 
     private:
+      std::set<const vsg::Object*> visited;
+
       // glTF's defaults are metallic 1 and roughness 1, which many exporters
       // (the AI model generators among them) write out as they are, for a
       // material that is just a textured surface. Lit by anything but a real

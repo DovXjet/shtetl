@@ -7,6 +7,8 @@
 #include <vsg/io/read.h>
 #include <vsg/utils/ComputeBounds.h>
 
+#include "Logging.h"
+
 #include <QFile>
 #include <QFileInfo>
 
@@ -16,6 +18,7 @@
 #include <cstring>
 #include <stdexcept>
 #include <string_view>
+#include <unordered_set>
 
 // 12 byte encoding of each vertex (as in XjetStudio)
 //
@@ -299,6 +302,38 @@ LoadedModel load3MF(const QString& path, const std::atomic<bool>* cancel, const 
   }, cancel, diffuse, progress);
 }
 
+namespace
+{
+  // Looks for a node that is its own ancestor. ComputeBounds and other
+  // visitors recurse forever (stack overflow) on such a graph.
+  bool findCycle(vsg::Object& object, std::unordered_set<const vsg::Object*>& path, std::unordered_set<const vsg::Object*>& done, std::string& where)
+  {
+    struct Finder : vsg::Visitor
+    {
+      std::unordered_set<const vsg::Object*>& path;
+      std::unordered_set<const vsg::Object*>& done;
+      std::string& where;
+      bool found = false;
+      Finder(std::unordered_set<const vsg::Object*>& p, std::unordered_set<const vsg::Object*>& d, std::string& w) : path(p), done(d), where(w) {}
+      void apply(vsg::Object& o) override
+      {
+        if (found || done.count(&o)) return;
+        if (!path.insert(&o).second)
+        {
+          found = true;
+          where = o.className();
+          return;
+        }
+        o.traverse(*this);
+        path.erase(&o);
+        done.insert(&o);
+      }
+    } finder(path, done, where);
+    object.accept(finder);
+    return finder.found;
+  }
+} // namespace
+
 LoadedModel loadModel(const QString& path, vsg::ref_ptr<vsg::Options> options, const std::atomic<bool>* cancel, const vsg::vec4& diffuse,
                      const LoadProgress& progress)
 {
@@ -306,10 +341,26 @@ LoadedModel loadModel(const QString& path, vsg::ref_ptr<vsg::Options> options, c
   if (ext == "stl") return loadStl(path, cancel, diffuse, progress);
   if (ext == "3mf") return load3MF(path, cancel, diffuse, progress);
 
+  spdlog::info("loadModel: reading {}", path.toStdString());
+  spdlog::default_logger()->flush(); // the log must survive a crash
   auto node = vsg::read_cast<vsg::Node>(shtetl::pathToUtf8(shtetl::qStringToPath(path)), options);
   if (!node) throw std::runtime_error("Could not read " + path.toStdString());
+  spdlog::info("loadModel: read {} ({})", path.toStdString(), node->className());
+
+  {
+    std::unordered_set<const vsg::Object*> onPath, done;
+    std::string where;
+    if (findCycle(*node, onPath, done, where))
+    {
+      spdlog::error("loadModel: {} has a cyclic scene graph (node of type {} is its own ancestor)", path.toStdString(), where);
+      spdlog::default_logger()->flush();
+      throw std::runtime_error("The scene graph of " + path.toStdString() + " contains a cycle");
+    }
+  }
 
   addEnvironmentLighting(node);
+  spdlog::info("loadModel: environment lighting done, computing bounds");
+  spdlog::default_logger()->flush();
 
   LoadedModel model;
   model.node = node;
