@@ -42,6 +42,9 @@ class ThumbnailBrowser : public QWidget
     // without changing the selection or loading anything.
     void removeFiles(const QStringList& paths);
 
+    // Puts the file on the system clipboard, as a file manager's Copy does.
+    static void copyFileToClipboard(const QString& path);
+
   signals:
     // The current model changed (click or arrow keys).
     void fileSelected(const QString& path);
@@ -57,6 +60,9 @@ class ThumbnailBrowser : public QWidget
     void onActivated(const QModelIndex& index);
     void onCurrentChanged(const QModelIndex& current);
     void onThumbnailReady(const QString& path, const QImage& image);
+    void onContextMenu(const QPoint& pos);
+    // Makes the thumbnail of a file anew, ignoring the cached one.
+    void refreshThumbnail(const QString& path);
     void setIconSize(int size);
     QIcon placeholderIcon(const QString& text) const;
     QIcon folderIcon() const;

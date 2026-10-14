@@ -91,6 +91,7 @@ private slots:
     void onDirectoryEnteredForRecents(const QString& path);
     void onAcceptedForRecents();
     void onPlacesContextMenu(const QPoint& pos);
+    void onFileContextMenu(QAbstractItemView* view, const QPoint& pos);
     void onRemoveSelectedRecent();
     void onAddBookmarkClicked();
     void onViewModeButtonClicked(ViewMode mode);

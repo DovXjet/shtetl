@@ -95,6 +95,13 @@ MainWindow::MainWindow()
   // applied by createMenus() from its own key.
   restoreGeometry(settings.value("Window/Geometry").toByteArray());
   restoreState(settings.value("Window/State").toByteArray());
+  // The width of the dock also has a key of its own, as the saved state alone
+  // does not always bring it back.
+  if (const int width = settings.value("View/ThumbnailsWidth", 0).toInt(); width > 0) resizeDocks({m_BrowserDock}, {width}, Qt::Horizontal);
+
+  // Quit (the menu, Q) ends the event loop without closing the window, so
+  // closeEvent() is not the only place to save from.
+  connect(qApp, &QCoreApplication::aboutToQuit, this, &MainWindow::saveWindowSettings);
 
   createMenus();
   statusBar()->showMessage("Open a model or a directory");
@@ -113,11 +120,21 @@ MainWindow::~MainWindow()
   m_Service = nullptr;
 }
 
-void MainWindow::closeEvent(QCloseEvent* event)
+void MainWindow::saveWindowSettings()
 {
   QSettings settings;
   settings.setValue("Window/Geometry", saveGeometry());
   settings.setValue("Window/State", saveState());
+  // A hidden dock keeps the width it was last saved with.
+  if (m_BrowserDock->isVisible()) settings.setValue("View/ThumbnailsWidth", m_BrowserDock->width());
+  // Also covers closing the dock with its own button. Only while the window is
+  // shown: once it is hidden at quit, the dock reads as hidden too.
+  if (isVisible()) settings.setValue("View/Thumbnails", m_BrowserDock->isVisible());
+}
+
+void MainWindow::closeEvent(QCloseEvent* event)
+{
+  saveWindowSettings();
   QMainWindow::closeEvent(event);
 }
 
@@ -200,7 +217,9 @@ void MainWindow::createMenus()
   });
   autoReload->setChecked(QSettings().value("View/AutoReload", false).toBool());
   m_BrowserDock->setVisible(settings.value("View/Thumbnails", true).toBool());
-  connect(dockAction, &QAction::toggled, this, [](bool show) { QSettings().setValue("View/Thumbnails", show); });
+  // Saved from triggered(), the user's own toggling (menu or F9): toggled() also
+  // fires when the window closes and hides the dock, which would store "hidden".
+  connect(dockAction, &QAction::triggered, this, [](bool show) { QSettings().setValue("View/Thumbnails", show); });
   viewMenu->addSeparator();
   auto* fit = viewMenu->addAction("Fit to Window", m_Viewport, [this]() { m_Viewport->fitAll(); });
   fit->setShortcuts({QKeySequence("Ctrl+0"), QKeySequence("F")});
@@ -498,15 +517,7 @@ void MainWindow::autoReload()
 void MainWindow::copyToClipboard()
 {
   if (m_CurrentFile.isEmpty()) return;
-  const QUrl url = QUrl::fromLocalFile(m_CurrentFile);
-
-  auto* mime = new QMimeData;
-  mime->setUrls({url});
-  mime->setText(QDir::toNativeSeparators(m_CurrentFile));
-#ifndef Q_OS_WIN
-  mime->setData("x-special/gnome-copied-files", ("copy\n" + url.toEncoded()));
-#endif
-  QApplication::clipboard()->setMimeData(mime);
+  ThumbnailBrowser::copyFileToClipboard(m_CurrentFile);
   statusBar()->showMessage("Copied " + QFileInfo(m_CurrentFile).fileName() + " to the clipboard", 3000);
 }
 

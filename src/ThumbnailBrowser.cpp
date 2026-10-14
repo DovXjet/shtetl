@@ -2,8 +2,11 @@
 
 #include "ModelFormats.h"
 
+#include <QApplication>
+#include <QClipboard>
 #include <QDir>
 #include <QFileInfo>
+#include <QMenu>
 #include <QHBoxLayout>
 #include <QLineEdit>
 #include <QListView>
@@ -95,6 +98,9 @@ ThumbnailBrowser::ThumbnailBrowser(ThumbnailService* service, QWidget* parent) :
   m_ScrollAnim->setEasingCurve(QEasingCurve::OutCubic);
   m_ScrollAnim->setDuration(220);
   m_View->viewport()->installEventFilter(this);
+
+  m_View->setContextMenuPolicy(Qt::CustomContextMenu);
+  connect(m_View, &QWidget::customContextMenuRequested, this, &ThumbnailBrowser::onContextMenu);
 
   connect(m_UpButton, &QToolButton::clicked, this, [this]() {
     QDir dir(m_Directory);
@@ -275,6 +281,40 @@ void ThumbnailBrowser::removeFiles(const QStringList& paths)
     m_Model->removeRow(it.value()->row());
     m_Items.erase(it);
   }
+}
+
+void ThumbnailBrowser::copyFileToClipboard(const QString& path)
+{
+  const QUrl url = QUrl::fromLocalFile(path);
+  auto* mime = new QMimeData;
+  mime->setUrls({url});
+  mime->setText(QDir::toNativeSeparators(path));
+#ifndef Q_OS_WIN
+  mime->setData("x-special/gnome-copied-files", ("copy\n" + url.toEncoded()));
+#endif
+  QApplication::clipboard()->setMimeData(mime);
+}
+
+void ThumbnailBrowser::onContextMenu(const QPoint& pos)
+{
+  const QModelIndex index = m_View->indexAt(pos);
+  if (!index.isValid() || index.data(IsDirRole).toBool()) return;
+  const QString path = index.data(PathRole).toString();
+
+  QMenu menu(this);
+  QAction* copy = menu.addAction("Copy");
+  QAction* refresh = menu.addAction("Refresh thumbnail");
+  const QAction* chosen = menu.exec(m_View->viewport()->mapToGlobal(pos));
+  if (chosen == copy) copyFileToClipboard(path);
+  else if (chosen == refresh) refreshThumbnail(path);
+}
+
+void ThumbnailBrowser::refreshThumbnail(const QString& path)
+{
+  auto it = m_Items.find(path);
+  if (it == m_Items.end()) return;
+  it.value()->setIcon(placeholderIcon("…"));
+  m_Service->request(path, m_Cancel, true);
 }
 
 void ThumbnailBrowser::onActivated(const QModelIndex& index)

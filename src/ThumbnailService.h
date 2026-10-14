@@ -21,7 +21,7 @@ class ThumbnailWorker : public QObject
     Q_OBJECT
   public slots:
     void initialize(vsg::ref_ptr<vsg::Device> device, vsg::ref_ptr<vsg::Options> options);
-    void makeThumbnail(const QString& path, CancelFlag cancel);
+    void makeThumbnail(const QString& path, CancelFlag cancel, bool force);
 
   signals:
     void resultReady(const QString& path, const QImage& image);
@@ -46,14 +46,15 @@ class ThumbnailService : public QObject
     // Queues the thumbnail of a file. It is skipped, if it has not started,
     // once *cancel is true. The result - a null image on failure - comes as
     // thumbnailReady() for whoever listens; consumers ignore paths they don't show.
-    void request(const QString& path, CancelFlag cancel);
+    // With `force` the cached PNG is ignored and the thumbnail is made anew.
+    void request(const QString& path, CancelFlag cancel, bool force = false);
 
   signals:
     void thumbnailReady(const QString& path, const QImage& image);
 
     // Internal: the queued hops to the worker thread.
     void initializeWorker(vsg::ref_ptr<vsg::Device> device, vsg::ref_ptr<vsg::Options> options);
-    void operate(const QString& path, CancelFlag cancel);
+    void operate(const QString& path, CancelFlag cancel, bool force);
 
   private:
     QThread m_Thread;

@@ -409,6 +409,8 @@ OpenFileDialog::OpenFileDialog(QWidget* parent, QSettings* settings, ThumbnailSe
         listView_->setItemDelegate(listThumbnailDelegate_);
         listView_->viewport()->installEventFilter(this);
         listView_->installEventFilter(this);
+        listView_->setContextMenuPolicy(Qt::CustomContextMenu);
+        connect(listView_, &QWidget::customContextMenuRequested, this, [this](const QPoint& pos) { onFileContextMenu(listView_, pos); });
     }
 
     if (treeView_)
@@ -427,6 +429,8 @@ OpenFileDialog::OpenFileDialog(QWidget* parent, QSettings* settings, ThumbnailSe
         treeView_->setSortingEnabled(true);
         treeView_->viewport()->installEventFilter(this);
         treeView_->installEventFilter(this);
+        treeView_->setContextMenuPolicy(Qt::CustomContextMenu);
+        connect(treeView_, &QWidget::customContextMenuRequested, this, [this](const QPoint& pos) { onFileContextMenu(treeView_, pos); });
     }
     installEventFilter(this);
 
@@ -909,6 +913,25 @@ void OpenFileDialog::onPlacesContextMenu(const QPoint& pos)
             }
         }
     }
+}
+
+// Right-click on a model in the file list: make its thumbnail anew.
+void OpenFileDialog::onFileContextMenu(QAbstractItemView* view, const QPoint& pos)
+{
+    const QModelIndex idx = view->indexAt(pos);
+    if (!idx.isValid()) return;
+    const QString path = QFileInfo(idx.data(QFileSystemModel::FilePathRole).toString()).absoluteFilePath();
+    if (QFileInfo(path).isDir() || !isSupportedFile(path)) return;
+
+    QMenu menu(view);
+    QAction* refresh = menu.addAction(tr("Refresh thumbnail"));
+    if (menu.exec(view->viewport()->mapToGlobal(pos)) != refresh) return;
+
+    thumbnailState_[path] = ThumbnailState::Queued;
+    thumbnailCache_.remove(path);
+    service_->request(path, cancel_, true);
+    if (listView_) listView_->viewport()->update();
+    if (treeView_) treeView_->viewport()->update();
 }
 
 void OpenFileDialog::onRemoveSelectedRecent()

@@ -54,7 +54,7 @@ void ThumbnailWorker::initialize(vsg::ref_ptr<vsg::Device> device, vsg::ref_ptr<
   m_Initialized = true;
 }
 
-void ThumbnailWorker::makeThumbnail(const QString& path, CancelFlag cancel)
+void ThumbnailWorker::makeThumbnail(const QString& path, CancelFlag cancel, bool force)
 {
   if (cancel && cancel->load()) return;
   if (!m_Initialized)
@@ -74,8 +74,8 @@ void ThumbnailWorker::makeThumbnail(const QString& path, CancelFlag cancel)
     const QFileInfo info(file);
     if (info.exists() && info.lastModified() >= modelInfo.lastModified()) image.load(file);
   };
-  loadIfFresh(cachePath);
-  if (image.isNull()) loadIfFresh(QFileInfo(cachePath).path() + "/" + modelInfo.completeBaseName() + ".png");
+  if (!force) loadIfFresh(cachePath);
+  if (!force && image.isNull()) loadIfFresh(QFileInfo(cachePath).path() + "/" + modelInfo.completeBaseName() + ".png");
 
   if (image.isNull())
   {
@@ -130,7 +130,7 @@ void ThumbnailService::initialize(vsg::ref_ptr<vsg::Device> device, vsg::ref_ptr
   emit initializeWorker(device, options);
 }
 
-void ThumbnailService::request(const QString& path, CancelFlag cancel)
+void ThumbnailService::request(const QString& path, CancelFlag cancel, bool force)
 {
-  emit operate(path, cancel);
+  emit operate(path, cancel, force);
 }

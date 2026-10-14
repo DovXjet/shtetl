@@ -35,6 +35,7 @@ class MainWindow : public QMainWindow
   private:
     bool eventFilter(QObject* watched, QEvent* event) override;
     void closeEvent(QCloseEvent* event) override;
+    void saveWindowSettings(); // geometry, dock state and width
     void createMenus();
     void showAboutDialog();
     void copyToClipboard();

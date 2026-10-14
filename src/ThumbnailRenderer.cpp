@@ -1,5 +1,7 @@
 #include "ThumbnailRenderer.h"
 
+#include "StudioLights.h"
+
 #include <vsg/all.h>
 
 #include <cstring>
@@ -267,7 +269,7 @@ vsg::ref_ptr<vsg::Data> ThumbnailRenderer::render(vsg::ref_ptr<vsg::Node> Scene,
     renderGraph->setClearValues({{1.0f, 1.0f, 0.0f, 0.0f}}, VkClearDepthStencilValue{0.0f, 0});
 
     auto view = vsg::View::create(camera);
-    view->addChild(vsg::createHeadlight());
+    view->addChild(createStudioLights());
     view->addChild(Scene);
 
     renderGraph->addChild(view);
@@ -301,7 +303,9 @@ vsg::ref_ptr<vsg::Data> ThumbnailRenderer::render(vsg::ref_ptr<vsg::Node> Scene,
         if (copiedColorBuffer)
         {
             // wait for completion.
-            viewer->waitForFences(0, waitTimeout);
+            // A timed-out wait would leave the capture unwritten (all zeros), which
+            // would be cached as a black thumbnail.
+            if (viewer->waitForFences(0, waitTimeout) != VK_SUCCESS) return {};
 
             VkImageSubresource subResource{VK_IMAGE_ASPECT_COLOR_BIT, 0, 0};
             VkSubresourceLayout subResourceLayout;
