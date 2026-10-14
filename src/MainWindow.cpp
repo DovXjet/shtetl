@@ -185,6 +185,11 @@ void MainWindow::createMenus()
   // back - while the menu bar is hidden.
   // The View checkboxes are remembered between runs.
   QSettings settings;
+  // Say in the status bar what a toggled setting changed to, e.g. when it was
+  // flipped by its keyboard shortcut. Connected after the initial state is set.
+  auto announce = [this](QAction* action, const QString& name) {
+    connect(action, &QAction::toggled, this, [this, name](bool on) { statusBar()->showMessage(name + (on ? ": on" : ": off"), 3000); });
+  };
   auto* menuBarAction = viewMenu->addAction("Menu Bar", this, [this](bool show) {
     menuBar()->setVisible(show);
     QSettings().setValue("View/MenuBar", show);
@@ -192,6 +197,7 @@ void MainWindow::createMenus()
   menuBarAction->setCheckable(true);
   const bool menuBarShown = settings.value("View/MenuBar", true).toBool();
   menuBarAction->setChecked(menuBarShown);
+  announce(menuBarAction, "Menu bar");
   menuBar()->setVisible(menuBarShown);
   menuBarAction->setShortcut(QKeySequence("Ctrl+M"));
   addAction(menuBarAction);
@@ -209,6 +215,12 @@ void MainWindow::createMenus()
     QSettings().setValue("View/AmbientOcclusion", on);
   });
   occlusion->setChecked(QSettings().value("View/AmbientOcclusion", false).toBool());
+  announce(occlusion, "Ambient occlusion");
+  auto* aoLabel = new QLabel("AO", this);
+  aoLabel->setToolTip("Ambient Occlusion");
+  aoLabel->setVisible(occlusion->isChecked());
+  statusBar()->addPermanentWidget(aoLabel);
+  connect(occlusion, &QAction::toggled, aoLabel, &QLabel::setVisible);
   auto* autoReload = viewMenu->addAction("Auto Re&load");
   autoReload->setCheckable(true);
   autoReload->setStatusTip("Reload the model when its file changes, e.g. when a CadQuery script exports it");
@@ -218,10 +230,14 @@ void MainWindow::createMenus()
     watchCurrentFile();
   });
   autoReload->setChecked(QSettings().value("View/AutoReload", false).toBool());
+  announce(autoReload, "Auto reload");
   m_BrowserDock->setVisible(settings.value("View/Thumbnails", true).toBool());
   // Saved from triggered(), the user's own toggling (menu or F9): toggled() also
   // fires when the window closes and hides the dock, which would store "hidden".
-  connect(dockAction, &QAction::triggered, this, [](bool show) { QSettings().setValue("View/Thumbnails", show); });
+  connect(dockAction, &QAction::triggered, this, [this](bool show) {
+    QSettings().setValue("View/Thumbnails", show);
+    statusBar()->showMessage(QString("Thumbnails: ") + (show ? "shown" : "hidden"), 3000);
+  });
   viewMenu->addSeparator();
 
   // The scene settings (background, model color, glTF materials), in a window
@@ -243,6 +259,13 @@ void MainWindow::createMenus()
   usePbr->setStatusTip("Draw with the physically based shader and its studio environment (metallic and roughness are set in Scene Settings)");
   addAction(usePbr);
   usePbr->setChecked(m_SceneSettings->usePbr());
+  announce(usePbr, "PBR shader");
+  // A permanent indicator, which the temporary status messages don't replace.
+  auto* pbrLabel = new QLabel("PBR", this);
+  pbrLabel->setToolTip("Physical Based Rendering");
+  pbrLabel->setVisible(usePbr->isChecked());
+  statusBar()->addPermanentWidget(pbrLabel);
+  connect(usePbr, &QAction::toggled, pbrLabel, &QLabel::setVisible);
   connect(usePbr, &QAction::toggled, m_SceneSettings, &SceneSettingsDialog::setUsePbr);
   connect(m_SceneSettings, &SceneSettingsDialog::usePbrChanged, usePbr, &QAction::setChecked);
   viewMenu->addSeparator();
@@ -254,6 +277,7 @@ void MainWindow::createMenus()
   connect(m_Viewport, &Viewport3D::projectionChanged, ortho, &QAction::setChecked);
   connect(m_Viewport, &Viewport3D::projectionChanged, this, [](bool on) { QSettings().setValue("View/Orthographic", on); });
   ortho->setChecked(settings.value("View/Orthographic", false).toBool());
+  connect(m_Viewport, &Viewport3D::projectionChanged, this, [this](bool on) { statusBar()->showMessage(QString("Projection: ") + (on ? "orthographic" : "perspective"), 3000); });
   viewMenu->addSeparator();
 
   // The 3D interaction flavor: the same presets as XjetStudio and RobotMotion,
@@ -273,6 +297,7 @@ void MainWindow::createMenus()
     connect(action, &QAction::triggered, this, [this, style]() {
       m_Viewport->setNavigationStyle(style);
       QSettings().setValue("Navigation/Style", QString::fromStdString(navigationStyleName(style)));
+      statusBar()->showMessage("Navigation style: " + QString::fromStdString(navigationStyleName(style)), 3000);
     });
   }
   styleMenu->setToolTipsVisible(true);
@@ -442,7 +467,7 @@ void MainWindow::onModelLoaded(quint64 id, const QString& path, LoadedModel mode
   spdlog::info("Loaded {} in {} ms", path.toStdString(), m_LoadTime.elapsed());
   m_CurrentFile = path;
   m_CopyAction->setEnabled(true);
-  setWindowTitle(QFileInfo(path).fileName() + " - shtetl");
+  setWindowTitle("shtetl: " + QFileInfo(path).fileName());
   const vsg::dvec3 size = m_Viewport->modelBounds().max - m_Viewport->modelBounds().min;
   statusBar()->showMessage(QString("%1  |  %2 x %3 x %4  |  %5")
                                .arg(path)
