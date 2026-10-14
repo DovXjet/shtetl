@@ -4,6 +4,8 @@
 
 #include <vsg/all.h>
 
+#include <algorithm>
+#include <cmath>
 #include <cstring>
 
 static vsg::ref_ptr<vsg::ImageView> createColorImageView(vsg::ref_ptr<vsg::Device> device, const VkExtent2D& extent, VkFormat imageFormat, VkSampleCountFlagBits samples)
@@ -58,7 +60,10 @@ static std::pair<vsg::ref_ptr<vsg::Commands>, vsg::ref_ptr<vsg::Image>> createCo
     vkGetPhysicalDeviceFormatProperties(*(physicalDevice), sourceImageFormat, &srcFormatProperties);
 
     VkFormatProperties destFormatProperties;
-    vkGetPhysicalDeviceFormatProperties(*(physicalDevice), VK_FORMAT_R8G8B8A8_UNORM, &destFormatProperties);
+    // The blit converts between the formats' encodings: an sRGB image has to
+    // go to an sRGB one, or the colors would be linear again.
+    const VkFormat blitFormat = sourceImageFormat == VK_FORMAT_R8G8B8A8_SRGB ? VK_FORMAT_R8G8B8A8_SRGB : VK_FORMAT_R8G8B8A8_UNORM;
+    vkGetPhysicalDeviceFormatProperties(*(physicalDevice), blitFormat, &destFormatProperties);
 
     bool supportsBlit = ((srcFormatProperties.optimalTilingFeatures & VK_FORMAT_FEATURE_BLIT_SRC_BIT) != 0) &&
         ((destFormatProperties.linearTilingFeatures & VK_FORMAT_FEATURE_BLIT_DST_BIT) != 0);
@@ -66,7 +71,7 @@ static std::pair<vsg::ref_ptr<vsg::Commands>, vsg::ref_ptr<vsg::Image>> createCo
     if (supportsBlit)
     {
         // we can automatically convert the image format when blit, so take advantage of it to ensure RGBA
-        targetImageFormat = VK_FORMAT_R8G8B8A8_UNORM;
+        targetImageFormat = blitFormat;
     }
 
     //std::cout<<"supportsBlit = "<<supportsBlit<<std::endl;
@@ -224,7 +229,33 @@ void ThumbnailRenderer::setDevice(vsg::ref_ptr<vsg::Device> device)
   m_QueueFamily = queueFamily;
 }
 
-vsg::ref_ptr<vsg::Data> ThumbnailRenderer::render(vsg::ref_ptr<vsg::Node> Scene, const vsg::dbox& bounds)
+QImage thumbnailImage(const vsg::Data& data)
+{
+    QImage view(static_cast<const uchar*>(data.dataPointer()), int(data.width()), int(data.height()), QImage::Format_RGBA8888);
+    QImage image = view.copy();
+
+    auto decode = [](float c) { return c <= 0.04045f ? c / 12.92f : std::pow((c + 0.055f) / 1.055f, 2.4f); };
+    auto encode = [](float c) { return c <= 0.0031308f ? c * 12.92f : 1.055f * std::pow(c, 1.0f / 2.4f) - 0.055f; };
+    for (int y = 0; y < image.height(); ++y)
+    {
+        uchar* row = image.scanLine(y);
+        for (int x = 0; x < image.width(); ++x)
+        {
+            uchar* pixel = row + 4 * x;
+            const int alpha = pixel[3];
+            if (alpha == 0 || alpha == 255) continue;
+            const float coverage = alpha / 255.0f;
+            for (int k = 0; k < 3; ++k)
+            {
+                const float linear = std::min(decode(pixel[k] / 255.0f) / coverage, 1.0f);
+                pixel[k] = static_cast<uchar>(std::lround(encode(linear) * 255.0f));
+            }
+        }
+    }
+    return image;
+}
+
+vsg::ref_ptr<vsg::Data> ThumbnailRenderer::render(vsg::ref_ptr<vsg::Node> Scene, const vsg::dbox& bounds, bool environmentLit)
 {
     // compute the bounds of the scene graph to help position camera
     if (!bounds.valid()) return {};
@@ -232,7 +263,9 @@ vsg::ref_ptr<vsg::Data> ThumbnailRenderer::render(vsg::ref_ptr<vsg::Node> Scene,
     vsg::dvec3 centre = (b.min + b.max) * 0.5;
     double radius = vsg::length(b.max - b.min);
     double nearFarRatio = 0.001;
-    VkFormat imageFormat = VK_FORMAT_R8G8B8A8_UNORM;
+    // sRGB, so that the (linear) colors of the shaders are encoded as in the
+    // viewer's swapchain; UNORM stored them as they were, which is far too dark.
+    VkFormat imageFormat = VK_FORMAT_R8G8B8A8_SRGB;
     VkFormat depthFormat = VK_FORMAT_D32_SFLOAT;
 
     // set up the camera
@@ -266,10 +299,12 @@ vsg::ref_ptr<vsg::Data> ThumbnailRenderer::render(vsg::ref_ptr<vsg::Node> Scene,
     renderGraph->framebuffer = framebuffer;
     renderGraph->renderArea.offset = {0, 0};
     renderGraph->renderArea.extent = m_Extent;
-    renderGraph->setClearValues({{1.0f, 1.0f, 0.0f, 0.0f}}, VkClearDepthStencilValue{0.0f, 0});
+    renderGraph->setClearValues({{0.0f, 0.0f, 0.0f, 0.0f}}, VkClearDepthStencilValue{0.0f, 0});
 
     auto view = vsg::View::create(camera);
-    view->addChild(createStudioLights());
+    auto studioLights = createStudioLights();
+    if (environmentLit) scaleStudioLights(studioLights, 0.0f);
+    view->addChild(studioLights);
     view->addChild(Scene);
 
     renderGraph->addChild(view);

@@ -29,7 +29,61 @@ vsg::ref_ptr<vsg::Options> createModelOptions()
 
 namespace
 {
-  // Finds the fragment shaders of VSG's PBR shader in a loaded scene graph and
+  // The PBR material values in the descriptor sets that a state group binds
+  // (that is where the glTF loader puts them).
+  std::vector<vsg::ref_ptr<vsg::PbrMaterialValue>> materialsBoundBy(vsg::StateGroup& stateGroup)
+  {
+    std::vector<vsg::ref_ptr<vsg::PbrMaterialValue>> materials;
+    auto scan = [&materials](const vsg::ref_ptr<vsg::DescriptorSet>& set) {
+      if (!set) return;
+      for (auto& descriptor : set->descriptors)
+      {
+        auto buffer = descriptor.cast<vsg::DescriptorBuffer>();
+        if (!buffer) continue;
+        for (auto& info : buffer->bufferInfoList)
+          if (auto material = info ? info->data.cast<vsg::PbrMaterialValue>() : vsg::ref_ptr<vsg::PbrMaterialValue>()) materials.push_back(material);
+      }
+    };
+    for (auto& command : stateGroup.stateCommands)
+    {
+      if (auto bind = command.cast<vsg::BindDescriptorSet>()) scan(bind->descriptorSet);
+      else if (auto binds = command.cast<vsg::BindDescriptorSets>())
+        for (auto& set : binds->descriptorSets) scan(set);
+    }
+    return materials;
+  }
+
+  // Finds the PBR material values in a loaded scene.
+  class FindPbrMaterials : public vsg::Visitor
+  {
+    public:
+      std::vector<vsg::ref_ptr<vsg::PbrMaterialValue>> materials;
+
+      void apply(vsg::Object& object) override { object.traverse(*this); }
+
+      void apply(vsg::StateGroup& stateGroup) override
+      {
+        for (auto& material : materialsBoundBy(stateGroup))
+          if (std::find(materials.begin(), materials.end(), material) == materials.end()) materials.push_back(material);
+        stateGroup.traverse(*this);
+      }
+  };
+} // namespace
+
+namespace
+{
+  // The source of a shader of VSG's PBR shader set. The shaders that VSG makes
+  // for the common combinations of defines hold only their compiled code, so
+  // the source has to come from the stock set.
+  std::string stockPbrSource(VkShaderStageFlagBits stageBit)
+  {
+    static const std::vector<vsg::ref_ptr<vsg::ShaderStage>> stages = vsg::createPhysicsBasedRenderingShaderSet()->stages;
+    for (auto& stage : stages)
+      if (stage->stage == stageBit && stage->module) return stage->module->source;
+    return {};
+  }
+
+  // Finds the fragment shaders of the PBR materials in a loaded scene graph and
   // adds the studio environment of pbr_environment.glsl to their lighting.
   class AddEnvironment : public vsg::Visitor
   {
@@ -38,31 +92,46 @@ namespace
 
       void apply(vsg::StateGroup& stateGroup) override
       {
-        for (auto& command : stateGroup.stateCommands)
-          if (auto bind = command.cast<vsg::BindGraphicsPipeline>())
-            if (bind->pipeline)
-              for (auto& stage : bind->pipeline->stages) patch(stage);
+        // The pipeline that is bound along with a PBR material is the PBR one.
+        if (!materialsBoundBy(stateGroup).empty())
+          for (auto& command : stateGroup.stateCommands)
+            if (auto bind = command.cast<vsg::BindGraphicsPipeline>())
+              if (bind->pipeline) patch(bind->pipeline->stages);
         stateGroup.traverse(*this);
       }
 
       int patched = 0;
 
     private:
-      void patch(const vsg::ref_ptr<vsg::ShaderStage>& stage)
+      // The stages of a PBR pipeline: the fragment shader is extended; the
+      // others are given their source too if they have only compiled code,
+      // as the shaders of a pipeline are compiled together.
+      void patch(const vsg::ShaderStages& stages)
       {
-        if (!stage || stage->stage != VK_SHADER_STAGE_FRAGMENT_BIT || !stage->module) return;
-        std::string source = stage->module->source;
+        vsg::ref_ptr<vsg::ShaderStage> fragment;
+        for (auto& stage : stages)
+          if (stage && stage->stage == VK_SHADER_STAGE_FRAGMENT_BIT && stage->module) fragment = stage;
+        if (!fragment) return;
+
+        std::string source = fragment->module->source;
+        if (source.empty()) source = stockPbrSource(VK_SHADER_STAGE_FRAGMENT_BIT);
         const std::string mainAnchor = "void main()";
         const std::string emissiveAnchor = "color += emissive;";
         const size_t mainAt = source.find(mainAnchor);
         const size_t emissiveAt = source.find(emissiveAnchor);
-        // Another shader (Phong, flat, ...), or one that is done already.
+        // Not the shader expected, or done already.
         if (mainAt == std::string::npos || emissiveAt == std::string::npos || emissiveAt < mainAt || source.find("environmentLighting") != std::string::npos) return;
-        if (source.find("PbrMaterial") == std::string::npos) return;
         // The call goes in first, being later in the text.
         source.insert(emissiveAt, "if (pbr.specularFactor.a > 1.5) color += environmentLighting(n, v, baseColor.rgb, metallic, perceptualRoughness, ambientOcclusion);\n    ");
         source.insert(mainAt, expandShaderIncludes("#pragma include pbr_environment\n") + "\n");
-        stage->module = vsg::ShaderModule::create(source, stage->module->hints);
+        // A new module compiles from the source, with the defines of the old one.
+        fragment->module = vsg::ShaderModule::create(source, fragment->module->hints);
+        for (auto& stage : stages)
+          if (stage && stage != fragment && stage->module && stage->module->source.empty())
+          {
+            const std::string stock = stockPbrSource(stage->stage);
+            if (!stock.empty()) stage->module = vsg::ShaderModule::create(stock, stage->module->hints);
+          }
         ++patched;
       }
   };
@@ -81,6 +150,20 @@ void addEnvironmentLighting(vsg::ref_ptr<vsg::Node> node)
   {
     spdlog::warn("No environment lighting for this model: {}", e.what());
   }
+}
+
+std::vector<vsg::ref_ptr<vsg::PbrMaterialValue>> findPbrMaterials(vsg::Node& node)
+{
+  FindPbrMaterials finder;
+  node.accept(finder);
+  return finder.materials;
+}
+
+bool lightWithEnvironment(vsg::Node& node)
+{
+  const auto materials = findPbrMaterials(node);
+  for (auto& material : materials) material->value().specularFactor.w = EnvironmentLightingOn;
+  return !materials.empty();
 }
 
 const QStringList& modelExtensions()

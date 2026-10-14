@@ -90,10 +90,12 @@ endif()
 file(GLOB CUBE_GIZMO_STL CONFIGURE_DEPENDS RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} resources/cube-gizmo/*.stl)
 qt_add_resources(shtetl cube_gizmo PREFIX / BASE resources FILES ${CUBE_GIZMO_STL})
 # The shaders of the compact meshes, compiled by VSG at run time.
-qt_add_resources(shtetl shaders PREFIX / BASE resources FILES resources/shaders/compact_mesh.vert resources/shaders/compact_mesh.frag
+set(SHTETL_SHADER_FILES
+            resources/shaders/compact_mesh.vert resources/shaders/compact_mesh.frag
             resources/shaders/compact_mesh_gbuffer.frag resources/shaders/ao_fullscreen.vert resources/shaders/ao_ssao.frag resources/shaders/ao_blur.frag
             resources/shaders/ao_composite.frag resources/shaders/ao_fxaa.frag resources/shaders/gradient_background.frag
             resources/shaders/pbr_environment.glsl resources/shaders/compact_pbr_common.glsl resources/shaders/compact_pbr.frag resources/shaders/compact_pbr_gbuffer.frag)
+qt_add_resources(shtetl shaders PREFIX / BASE resources FILES ${SHTETL_SHADER_FILES})
 # The application logo (window icon; the .ico is embedded by resources/shtetl.rc).
 qt_add_resources(shtetl icons PREFIX / BASE resources FILES resources/icons/shtetl.png resources/icons/shtetl-about.png)
 
@@ -110,6 +112,28 @@ if(OpenMP_CXX_FOUND)
 endif()
 if(UNIX AND NOT APPLE)
   target_link_libraries(shtetl PRIVATE pthread ${CMAKE_DL_LIBS})
+endif()
+
+# A headless thumbnail renderer for checking changes to the thumbnails without
+# running shtetl: cmake --build <dir> --target thumbtool. Not part of "all".
+add_executable(thumbtool EXCLUDE_FROM_ALL
+  tools/thumbtool.cpp
+  src/ThumbnailRenderer.cpp
+  src/CompactMesh.cpp
+  src/Mesh3mf.cpp
+  src/ModelFormats.cpp
+)
+target_include_directories(thumbtool PRIVATE src)
+qt_add_resources(thumbtool shaders PREFIX / BASE resources FILES ${SHTETL_SHADER_FILES})
+if(UNIX AND NOT APPLE)
+  target_link_options(thumbtool PRIVATE -Wl,--no-as-needed)
+endif()
+target_link_libraries(thumbtool PRIVATE libzip::zip vsg::vsg vsgXchange::vsgXchange spdlog::spdlog Qt6::Core Qt6::Gui)
+if(OpenMP_CXX_FOUND)
+  target_link_libraries(thumbtool PRIVATE OpenMP::OpenMP_CXX)
+endif()
+if(UNIX AND NOT APPLE)
+  target_link_libraries(thumbtool PRIVATE pthread ${CMAKE_DL_LIBS})
 endif()
 
 # Version / commit info shown in Help > About (taken when CMake configures).

@@ -2,6 +2,7 @@
 
 #include "CompactMesh.h"
 #include "Logging.h"
+#include "ModelFormats.h"
 #include "QtPathUtils.h"
 
 #include <vsg/io/read.h>
@@ -11,6 +12,7 @@
 #include <QFileInfo>
 #include <QStandardPaths>
 
+#include <cmath>
 #include <cstring>
 #include <iostream>
 
@@ -19,13 +21,16 @@ namespace
   constexpr int ThumbnailSize = 256;
 
   // The colors of the models of XjetStudio's thumbnails (its ThumbnailManager):
-  // STL pink, 3MF green. Other formats bring their own materials.
+  // STL pink, 3MF green. Other formats bring their own materials. The values
+  // are sRGB, as one picks them; the shaders take linear light.
   vsg::vec4 thumbnailColor(const QString& path)
   {
+    auto linear = [](float c) { return c <= 0.04045f ? c / 12.92f : std::pow((c + 0.055f) / 1.055f, 2.4f); };
+    auto color = [&](float r, float g, float b) { return vsg::vec4(linear(r), linear(g), linear(b), 1.0f); };
     const QString ext = QFileInfo(path).suffix().toLower();
-    if (ext == "stl") return vsg::vec4(1.0f, 0.8f, 0.8f, 1.0f);
-    if (ext == "3mf") return vsg::vec4(0.8f, 1.0f, 0.8f, 1.0f);
-    return vsg::vec4(0.85f, 0.85f, 0.85f, 1.0f);
+    if (ext == "stl") return color(1.0f, 0.8f, 0.8f);
+    if (ext == "3mf") return color(0.8f, 1.0f, 0.8f);
+    return color(0.93f, 0.93f, 0.93f);
   }
 
   // The PNG that caches the thumbnail of a model: in ".thumbnails" next to it,
@@ -84,11 +89,13 @@ void ThumbnailWorker::makeThumbnail(const QString& path, CancelFlag cancel, bool
       {
         const LoadedModel model = loadModel(path, m_Options, cancel.get(), thumbnailColor(path));
         if (cancel && cancel->load()) return;
-        if (auto data = m_Renderer.render(model.node, model.bounds))
+        // The PBR materials (glTF) are lit by the environment, as in the viewer
+        // with the PBR shader: a metallic one has nothing else to show.
+        const bool environmentLit = lightWithEnvironment(*model.node);
+        if (auto data = m_Renderer.render(model.node, model.bounds, environmentLit))
         {
           // The renderer's RGBA8 rows, copied: the data is mapped GPU memory.
-          QImage view(static_cast<const uchar*>(data->dataPointer()), int(data->width()), int(data->height()), QImage::Format_RGBA8888);
-          image = view.copy();
+          image = thumbnailImage(*data);
           image.save(cachePath, "PNG");
         }
       }

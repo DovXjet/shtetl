@@ -629,51 +629,11 @@ void Viewport3D::setGradientBackground(bool enabled)
   else if (m_Camera && m_Window && m_Window->windowAdapter) rebuildSceneGraph();
 }
 
-namespace
-{
-  // Finds the PBR material values in a loaded scene (the glTF loader puts them
-  // in the descriptor sets of its state groups).
-  class FindPbrMaterials : public vsg::Visitor
-  {
-    public:
-      std::vector<vsg::ref_ptr<vsg::PbrMaterialValue>> materials;
-
-      void apply(vsg::Object& object) override { object.traverse(*this); }
-
-      void apply(vsg::StateGroup& stateGroup) override
-      {
-        for (auto& command : stateGroup.stateCommands)
-        {
-          if (auto bind = command.cast<vsg::BindDescriptorSet>()) scan(bind->descriptorSet);
-          else if (auto binds = command.cast<vsg::BindDescriptorSets>())
-            for (auto& set : binds->descriptorSets) scan(set);
-        }
-        stateGroup.traverse(*this);
-      }
-
-    private:
-      void scan(const vsg::ref_ptr<vsg::DescriptorSet>& set)
-      {
-        if (!set) return;
-        for (auto& descriptor : set->descriptors)
-        {
-          auto buffer = descriptor.cast<vsg::DescriptorBuffer>();
-          if (!buffer) continue;
-          for (auto& info : buffer->bufferInfoList)
-            if (auto material = info ? info->data.cast<vsg::PbrMaterialValue>() : vsg::ref_ptr<vsg::PbrMaterialValue>())
-              if (std::find(materials.begin(), materials.end(), material) == materials.end()) materials.push_back(material);
-        }
-      }
-  };
-} // namespace
-
 void Viewport3D::collectMaterials()
 {
   m_PbrMaterials.clear();
   if (!m_Model) return;
-  FindPbrMaterials finder;
-  m_Model->accept(finder);
-  for (auto& material : finder.materials)
+  for (auto& material : findPbrMaterials(*m_Model))
   {
     // Before the scene graph is compiled: only data that is dynamic can be
     // changed afterwards.
@@ -691,7 +651,7 @@ void Viewport3D::applyMaterialOverride()
     state.material->value().metallicFactor = m_OverrideMaterial ? m_OverrideMetallic : state.metallic;
     state.material->value().roughnessFactor = m_OverrideMaterial ? m_OverrideRoughness : state.roughness;
     // Lit by the environment (see ModelFormats.cpp), which the studio lights then leave to.
-    state.material->value().specularFactor.w = m_OverrideMaterial ? 2.0f : state.specularAlpha;
+    state.material->value().specularFactor.w = m_OverrideMaterial ? EnvironmentLightingOn : state.specularAlpha;
     state.material->dirty();
   }
 }

@@ -7,11 +7,12 @@
 // view space: y up, the camera looks down -z.
 
 // A soft box: a lobe around `center`, that is wider and dimmer (with the same
-// energy) the rougher the reflection that looks at it.
+// energy: a lobe cos^e holds 2pi/(e+1) of it, so its peak goes with e+1) the
+// rougher the reflection that looks at it.
 float softBox(vec3 dir, vec3 center, float sharpness, float roughness)
 {
     float e = mix(sharpness, 1.5, roughness);
-    return pow(max(dot(dir, center), 0.0), e) * (sharpness + 1.0) / (e + 1.0);
+    return pow(max(dot(dir, center), 0.0), e) * (e + 1.0) / (sharpness + 1.0);
 }
 
 // Radiance of the environment seen along `dir` (view space: y up, the camera
