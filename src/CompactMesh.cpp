@@ -63,9 +63,20 @@ namespace
   {
     const auto& vertices = source.vertices;
     const auto& diffuse = source.diffuse;
+    const bool pbr = source.pbr && source.pbrMaterial;
     auto vertexShader = vsg::ShaderStage::create(VK_SHADER_STAGE_VERTEX_BIT, "main", resourceText(":/shaders/compact_mesh.vert"));
-    auto fragmentShader = vsg::ShaderStage::create(VK_SHADER_STAGE_FRAGMENT_BIT, "main",
-                                                   resourceText(gbuffer ? ":/shaders/compact_mesh_gbuffer.frag" : ":/shaders/compact_mesh.frag"));
+    std::string fragmentSource;
+    if (pbr)
+    {
+      // The lighting is shared by the two passes: pasted in where they ask.
+      fragmentSource = resourceText(gbuffer ? ":/shaders/compact_pbr_gbuffer.frag" : ":/shaders/compact_pbr.frag");
+      const std::string marker = "#pragma include_common";
+      const auto at = fragmentSource.find(marker);
+      if (at != std::string::npos) fragmentSource.replace(at, marker.size(), resourceText(":/shaders/compact_pbr_common.glsl"));
+    }
+    else
+      fragmentSource = resourceText(gbuffer ? ":/shaders/compact_mesh_gbuffer.frag" : ":/shaders/compact_mesh.frag");
+    auto fragmentShader = vsg::ShaderStage::create(VK_SHADER_STAGE_FRAGMENT_BIT, "main", fragmentSource);
     auto shaderSet = vsg::ShaderSet::create(vsg::ShaderStages{vertexShader, fragmentShader});
 
     // The vertex is three uints, not a vec3, and has no other attributes.
@@ -76,12 +87,13 @@ namespace
     material->value().diffuse = diffuse;
     material->value().specular = vsg::vec4{1.0f, 1.0f, 1.0f, 1.0f};
     material->value().shininess = 16.0f;
+    vsg::ref_ptr<vsg::Data> materialData = pbr ? vsg::ref_ptr<vsg::Data>(source.pbrMaterial) : vsg::ref_ptr<vsg::Data>(material);
     shaderSet->addDescriptorBinding("material", "", 1, 10, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1,
-                                    VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, material);
+                                    VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, materialData);
     shaderSet->addPushConstantRange("pc", "", VK_SHADER_STAGE_VERTEX_BIT, 0, 128);
 
     auto config = vsg::GraphicsPipelineConfigurator::create(shaderSet);
-    config->assignDescriptor("material", material);
+    config->assignDescriptor("material", materialData);
     config->enableArray("vsg_Vertex", VK_VERTEX_INPUT_RATE_VERTEX, 12);
 
     // Both sides of a face are drawn (the fragment shader lights both).
@@ -195,6 +207,10 @@ namespace
 
     LoadedModel model;
     model.compact = CompactSource{vertices, vsg::dvec3(lo.x, lo.y, lo.z), vsg::dvec3(range.x, range.y, range.z), diffuse};
+    // For the physically based mode; changed live, so dynamic.
+    model.compact.pbrMaterial = vsg::PbrMaterialValue::create();
+    model.compact.pbrMaterial->properties.dataVariance = vsg::DYNAMIC_DATA;
+    model.compact.pbrMaterial->value().baseColorFactor = diffuse;
     model.node = makeNode(model.compact, false);
     model.bounds = vsg::dbox(vsg::dvec3(lo.x, lo.y, lo.z), vsg::dvec3(hi.x, hi.y, hi.z));
     return model;

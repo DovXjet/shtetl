@@ -94,9 +94,10 @@ class Viewport3D : public QWidget
     // models are loaded with their own color argument.
     void setModelColor(const vsg::vec4& diffuse);
 
-    // Replaces the metallic and roughness factors of the glTF (PBR) materials
-    // of the model shown, and of the ones shown later; off, the file's own
-    // values are used.
+    // "Use PBR shader": STL and 3MF models are drawn with the physically based
+    // shaders (their color is the base color), and the metallic and roughness
+    // factors of glTF materials are replaced. Applies to the model shown and
+    // to the ones shown later; off, the Phong shaders and the file's own values.
     void setMaterialOverride(bool enabled, float metallic, float roughness);
 
     void toggleProjection() { setOrthographic(!m_Orthographic); }
@@ -127,6 +128,8 @@ class Viewport3D : public QWidget
     // The PBR materials of m_Model, made updatable and remembered as authored.
     void collectMaterials();
     void applyMaterialOverride();
+    // The STL/3MF model: its PBR material's values, and the shader that is in use.
+    void updateCompactMaterial(bool rebuild);
     void addKeyViewpoints(const vsg::dvec3& center, double distance);
 
     vsg::ref_ptr<vsg::WindowTraits> m_Traits;

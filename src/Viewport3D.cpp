@@ -300,6 +300,7 @@ void Viewport3D::setModel(LoadedModel loaded)
   m_ModelBounds = loaded.bounds;
   m_Compact = loaded.compact;
   collectMaterials();
+  updateCompactMaterial(false);
   try
   {
     buildSceneGraph();
@@ -315,6 +316,7 @@ void Viewport3D::setModel(LoadedModel loaded)
     m_ModelBounds = oldBounds;
     m_Compact = oldCompact;
     collectMaterials();
+    updateCompactMaterial(false);
     loaded = {};
     try
     {
@@ -696,13 +698,39 @@ void Viewport3D::setMaterialOverride(bool enabled, float metallic, float roughne
   m_OverrideMetallic = metallic;
   m_OverrideRoughness = roughness;
   applyMaterialOverride();
+  updateCompactMaterial(true);
   if (m_Viewer && !m_PbrMaterials.empty()) m_Viewer->request();
+}
+
+void Viewport3D::updateCompactMaterial(bool rebuild)
+{
+  if (!m_Compact || !m_Model) return;
+  auto& material = m_Compact.pbrMaterial->value();
+  material.metallicFactor = m_OverrideMetallic;
+  material.roughnessFactor = m_OverrideRoughness;
+  material.baseColorFactor = m_Compact.diffuse;
+  m_Compact.pbrMaterial->dirty();
+  if (m_Compact.pbr != m_OverrideMaterial)
+  {
+    // Another shader: another node (and pipeline).
+    m_Compact.pbr = m_OverrideMaterial;
+    m_Model = makeCompactNode(m_Compact);
+    if (rebuild && m_Camera && m_Window && m_Window->windowAdapter) rebuildSceneGraph();
+  }
+  else if (m_Viewer)
+    m_Viewer->request();
 }
 
 void Viewport3D::setModelColor(const vsg::vec4& diffuse)
 {
   if (!m_Compact || !m_Model) return;
   m_Compact.diffuse = diffuse;
+  if (m_Compact.pbr)
+  {
+    // The material carries the color: nothing to rebuild.
+    updateCompactMaterial(false);
+    return;
+  }
   m_Model = makeCompactNode(m_Compact);
   if (m_Camera && m_Window && m_Window->windowAdapter) rebuildSceneGraph();
 }

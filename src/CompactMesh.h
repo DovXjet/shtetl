@@ -21,6 +21,11 @@ struct CompactSource
     vsg::ref_ptr<vsg::uivec3Array> vertices;
     vsg::dvec3 boxMin, boxRange;
     vsg::vec4 diffuse;
+    // Drawn with the physically based shaders instead of the Phong ones; the
+    // material is shared by the nodes made from this source, and may be changed
+    // (then dirty()) while they are shown.
+    bool pbr = false;
+    vsg::ref_ptr<vsg::PbrMaterialValue> pbrMaterial;
     explicit operator bool() const { return vertices.valid(); }
 };
 
@@ -33,7 +38,8 @@ struct LoadedModel
     CompactSource compact;
 };
 
-// The node that draws a compact mesh into the window.
+// The node that draws a compact mesh into the window (with source.pbr, the
+// physically based shaders are used).
 vsg::ref_ptr<vsg::Node> makeCompactNode(const CompactSource& source);
 
 // The node that draws a compact mesh into the three targets of the G-buffer

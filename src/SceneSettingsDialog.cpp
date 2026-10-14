@@ -76,9 +76,10 @@ SceneSettingsDialog::SceneSettingsDialog(Viewport3D* viewport, QWidget* parent) 
   m_ModelButton = colorButton();
   modelsForm->addRow("Color:", m_ModelButton);
 
-  auto* materials = new QGroupBox("glTF / GLB materials", this);
+  auto* materials = new QGroupBox("Material", this);
   auto* materialsForm = new QFormLayout(materials);
-  m_Override = new QCheckBox("Override the file's materials", this);
+  m_Override = new QCheckBox("Use PBR shader", this);
+  m_Override->setToolTip("Draw STL and 3MF models with the physically based shader, and replace the metallic and roughness of glTF materials");
   materialsForm->addRow(m_Override);
   // A slider with a spin box beside it, for a value from 0 to 1.
   auto valueRow = [this](QSlider*& slider, QDoubleSpinBox*& spin) {
