@@ -153,6 +153,11 @@ namespace
     return Value <= 0.04045f ? Value / 12.92f : std::pow((Value + 0.055f) / 1.055f, 2.4f);
   }
 
+  vsg::vec3 srgbVec(const QColor& c)
+  {
+    return {static_cast<float>(c.redF()), static_cast<float>(c.greenF()), static_cast<float>(c.blueF())};
+  }
+
   // The occlusion: how far it reaches (as a fraction of the model's radius)
   // and how much it darkens.
   constexpr double AmbientOcclusionRadius = 0.12;
@@ -267,6 +272,7 @@ void Viewport3D::onContainerResized()
     m_Occlusion->compositionCamera()->viewportState->set(0, 0, width, height);
     if (m_Occlusion->extent().width != width || m_Occlusion->extent().height != height) m_OcclusionResizeTimer.start();
   }
+  if (m_Gradient) m_Gradient->camera()->viewportState->set(0, 0, width, height);
   m_Viewer->request();
 }
 
@@ -399,6 +405,7 @@ void Viewport3D::buildSceneGraph()
   if (m_OcclusionUpdater) handlers.erase(std::remove(handlers.begin(), handlers.end(), m_OcclusionUpdater), handlers.end());
   m_Occlusion = nullptr;
   m_OcclusionUpdater = nullptr;
+  m_Gradient = nullptr;
   if (m_Gizmo)
   {
     handlers.erase(std::remove(handlers.begin(), handlers.end(), m_Gizmo->GetIntersectionHandler()), handlers.end());
@@ -449,7 +456,8 @@ void Viewport3D::buildSceneGraph()
     auto gbufferScene = vsg::Group::create();
     gbufferScene->addChild(makeCompactGBufferNode(m_Compact));
     const VkExtent2D occlusionExtent = m_PixelExtent.width > 0 ? m_PixelExtent : extent;
-    m_Occlusion = AmbientOcclusion::create(device, m_Camera, gbufferScene, occlusionExtent, m_FitRadius * AmbientOcclusionRadius, backgroundLinear());
+    m_Occlusion = AmbientOcclusion::create(device, m_Camera, gbufferScene, occlusionExtent, m_FitRadius * AmbientOcclusionRadius, srgbVec(m_Background),
+                                     m_GradientBackground ? srgbVec(m_BackgroundBottom) : srgbVec(m_Background));
     m_Occlusion->setStrength(AmbientOcclusionStrength);
     m_OcclusionUpdater = AmbientOcclusionUpdater::create();
     m_OcclusionUpdater->occlusion = m_Occlusion;
@@ -458,6 +466,13 @@ void Viewport3D::buildSceneGraph()
   }
   else
   {
+    if (m_GradientBackground)
+    {
+      // Before the model; it writes no depth.
+      const VkExtent2D gradientExtent = m_PixelExtent.width > 0 ? m_PixelExtent : extent;
+      m_Gradient = GradientBackground::create(gradientExtent, m_Window->windowAdapter->framebufferSamples(), srgbVec(m_Background), srgbVec(m_BackgroundBottom));
+      view3D->addChild(m_Gradient->view());
+    }
     auto view = vsg::View::create(m_Camera);
     view->addChild(root);
     view3D->addChild(view);
@@ -571,20 +586,40 @@ vsg::vec3 Viewport3D::backgroundLinear() const
           SrgbToLinear(static_cast<float>(m_Background.blueF()))};
 }
 
+void Viewport3D::applyBackground()
+{
+  if (!m_Camera || !m_Window || !m_Window->windowAdapter) return;
+  const vsg::vec3 top = srgbVec(m_Background);
+  const vsg::vec3 bottom = m_GradientBackground ? srgbVec(m_BackgroundBottom) : top;
+  const vsg::vec3 linear = backgroundLinear();
+  if (m_RenderGraph) m_RenderGraph->setClearValues(VkClearColorValue{{linear.r, linear.g, linear.b, 1.0f}});
+  if (m_Occlusion) m_Occlusion->setBackground(top, bottom);
+  if (m_Gradient) m_Gradient->setColors(top, bottom);
+  m_Viewer->request();
+}
+
 void Viewport3D::setBackground(const QColor& color)
 {
   if (!color.isValid() || color == m_Background) return;
   m_Background = color;
-  if (!m_Camera || !m_Window || !m_Window->windowAdapter) return;
-  // The occlusion's composition carries the background color; rebuild for it.
-  if (m_Occlusion)
-  {
-    rebuildSceneGraph();
-    return;
-  }
-  const vsg::vec3 linear = backgroundLinear();
-  m_RenderGraph->setClearValues(VkClearColorValue{{linear.r, linear.g, linear.b, 1.0f}});
-  m_Viewer->request();
+  applyBackground();
+}
+
+void Viewport3D::setBackgroundBottom(const QColor& color)
+{
+  if (!color.isValid() || color == m_BackgroundBottom) return;
+  m_BackgroundBottom = color;
+  applyBackground();
+}
+
+void Viewport3D::setGradientBackground(bool enabled)
+{
+  if (enabled == m_GradientBackground) return;
+  m_GradientBackground = enabled;
+  // The plain view draws the gradient in a view of its own, which comes or goes
+  // with the scene graph; the occlusion's composition just takes other colors.
+  if (m_Occlusion) applyBackground();
+  else if (m_Camera && m_Window && m_Window->windowAdapter) rebuildSceneGraph();
 }
 
 void Viewport3D::setModelColor(const vsg::vec4& diffuse)

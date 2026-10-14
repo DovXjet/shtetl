@@ -139,7 +139,8 @@ namespace
   // A fullscreen triangle with the given fragment shader, which reads the
   // given images (bindings 0...) and uniform buffers (the descriptors).
   vsg::ref_ptr<vsg::Node> createFullscreenPass(const char* fragmentResource, const std::vector<vsg::ref_ptr<vsg::ImageInfo>>& images,
-                                               const std::vector<vsg::ref_ptr<vsg::Descriptor>>& uniforms)
+                                               const std::vector<vsg::ref_ptr<vsg::Descriptor>>& uniforms,
+                                               VkSampleCountFlagBits samples = VK_SAMPLE_COUNT_1_BIT)
   {
     vsg::ShaderStages stages{shader(VK_SHADER_STAGE_VERTEX_BIT, ":/shaders/ao_fullscreen.vert"), shader(VK_SHADER_STAGE_FRAGMENT_BIT, fragmentResource)};
 
@@ -163,11 +164,13 @@ namespace
     depthStencil->depthTestEnable = VK_FALSE;
     depthStencil->depthWriteEnable = VK_FALSE;
     depthStencil->depthCompareOp = VK_COMPARE_OP_ALWAYS;
+    auto multisample = vsg::MultisampleState::create();
+    multisample->rasterizationSamples = samples;
     vsg::GraphicsPipelineStates states{
         vsg::VertexInputState::create(vsg::VertexInputState::Bindings{}, vsg::VertexInputState::Attributes{}),
         vsg::InputAssemblyState::create(),
         rasterization,
-        vsg::MultisampleState::create(),
+        multisample,
         vsg::ColorBlendState::create(),
         depthStencil,
     };
@@ -196,7 +199,7 @@ namespace
   }
 } // namespace
 
-AmbientOcclusion::AmbientOcclusion(vsg::ref_ptr<vsg::Device> device, vsg::ref_ptr<vsg::Camera> camera, vsg::ref_ptr<vsg::Node> scene, VkExtent2D extent, double radius, vsg::vec3 background)
+AmbientOcclusion::AmbientOcclusion(vsg::ref_ptr<vsg::Device> device, vsg::ref_ptr<vsg::Camera> camera, vsg::ref_ptr<vsg::Node> scene, VkExtent2D extent, double radius, vsg::vec3 backgroundTop, vsg::vec3 backgroundBottom)
     : m_Camera(camera), m_Extent(extent)
 {
   m_SsaoParams = vsg::Value<SsaoParams>::create();
@@ -204,7 +207,8 @@ AmbientOcclusion::AmbientOcclusion(vsg::ref_ptr<vsg::Device> device, vsg::ref_pt
   m_SsaoParams->value().radius = static_cast<float>(radius);
   m_CompositionParams = vsg::Value<CompositionParams>::create();
   m_CompositionParams->properties.dataVariance = vsg::DYNAMIC_DATA;
-  m_CompositionParams->value().background = vsg::vec4(background, 1.0f);
+  m_CompositionParams->value().background = vsg::vec4(backgroundTop, 1.0f);
+  m_CompositionParams->value().backgroundBottom = vsg::vec4(backgroundBottom, 1.0f);
   updateProjection();
 
   // The random rotations of the kernel around each normal, tiled over the
@@ -276,4 +280,28 @@ void AmbientOcclusion::updateProjection()
 {
   m_SsaoParams->value().projection = vsg::mat4(m_Camera->projectionMatrix->transform());
   m_SsaoParams->dirty();
+}
+
+void AmbientOcclusion::setBackground(const vsg::vec3& top, const vsg::vec3& bottom)
+{
+  m_CompositionParams->value().background = vsg::vec4(top, 1.0f);
+  m_CompositionParams->value().backgroundBottom = vsg::vec4(bottom, 1.0f);
+  m_CompositionParams->dirty();
+}
+
+GradientBackground::GradientBackground(VkExtent2D extent, VkSampleCountFlagBits samples, const vsg::vec3& top, const vsg::vec3& bottom)
+{
+  m_Params = vsg::Value<Params>::create();
+  m_Params->properties.dataVariance = vsg::DYNAMIC_DATA;
+  setColors(top, bottom);
+  m_Camera = createFullscreenCamera(extent);
+  m_View = vsg::View::create(m_Camera, createFullscreenPass(":/shaders/gradient_background.frag", {},
+                                                            {vsg::DescriptorBuffer::create(m_Params, 0, 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER)}, samples));
+}
+
+void GradientBackground::setColors(const vsg::vec3& top, const vsg::vec3& bottom)
+{
+  m_Params->value().top = vsg::vec4(top, 1.0f);
+  m_Params->value().bottom = vsg::vec4(bottom, 1.0f);
+  m_Params->dirty();
 }

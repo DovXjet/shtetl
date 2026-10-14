@@ -12,17 +12,23 @@ layout(binding = 3) uniform UBO
     float pad0;
     float pad1;
     float pad2;
-    vec4 background; // where there is no geometry
+    vec4 background;       // where there is no geometry: the top (sRGB)...
+    vec4 backgroundBottom; // ...and the bottom of the gradient
 } ubo;
 
 layout(location = 0) in vec2 inUV;
 layout(location = 0) out vec4 outFragColor;
 
+vec3 srgbToLinear(vec3 c)
+{
+    return mix(c / 12.92, pow((c + 0.055) / 1.055, vec3(2.4)), step(0.04045, c));
+}
+
 void main()
 {
     if (texture(samplerPosition, inUV).a >= 0.0)
     {
-        outFragColor = ubo.background;
+        outFragColor = vec4(srgbToLinear(mix(ubo.background.rgb, ubo.backgroundBottom.rgb, clamp(inUV.y, 0.0, 1.0))), 1.0);
         return;
     }
     vec3 color = texture(samplerColor, inUV).rgb;

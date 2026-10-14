@@ -255,6 +255,20 @@ void MainWindow::createMenus()
     const QColor color = pickColor(this, "Background Color", m_Viewport->background(), [this](const QColor& c) { m_Viewport->setBackground(c); });
     if (color.isValid()) QSettings().setValue("View/BackgroundColor", color);
   });
+  const QColor bottom = settings.value("View/BackgroundBottomColor", Viewport3D::defaultBackgroundBottom()).value<QColor>();
+  m_Viewport->setBackgroundBottom(bottom.isValid() ? bottom : Viewport3D::defaultBackgroundBottom());
+  auto* gradient = viewMenu->addAction("Gradient Background");
+  gradient->setCheckable(true);
+  gradient->setStatusTip("Fade the background from the Background Color at the top to the Gradient Bottom Color");
+  connect(gradient, &QAction::toggled, this, [this](bool on) {
+    m_Viewport->setGradientBackground(on);
+    QSettings().setValue("View/GradientBackground", on);
+  });
+  gradient->setChecked(settings.value("View/GradientBackground", false).toBool());
+  viewMenu->addAction("Gradient Bottom Color...", this, [this]() {
+    const QColor color = pickColor(this, "Gradient Bottom Color", m_Viewport->backgroundBottom(), [this](const QColor& c) { m_Viewport->setBackgroundBottom(c); });
+    if (color.isValid()) QSettings().setValue("View/BackgroundBottomColor", color);
+  });
   viewMenu->addAction("Model Color...", this, [this]() {
     auto apply = [this](const QColor& c) {
       m_ModelColor = c;
@@ -265,8 +279,10 @@ void MainWindow::createMenus()
   });
   viewMenu->addAction("Reset Colors", this, [this, defaultModelColor]() {
     m_Viewport->setBackground(Viewport3D::defaultBackground());
+    m_Viewport->setBackgroundBottom(Viewport3D::defaultBackgroundBottom());
     QSettings settings;
     settings.remove("View/BackgroundColor");
+    settings.remove("View/BackgroundBottomColor");
     settings.remove("View/ModelColor");
     m_ModelColor = defaultModelColor;
     m_Viewport->setModelColor(linearColor(m_ModelColor));

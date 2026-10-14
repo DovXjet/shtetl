@@ -77,10 +77,17 @@ class Viewport3D : public QWidget
     void setAmbientOcclusion(bool enabled);
     bool isAmbientOcclusion() const { return m_AmbientOcclusion; }
 
-    // The color behind the model (sRGB). The default is XjetStudio's deep blue.
+    // The color behind the model (sRGB); the top of the gradient when that is
+    // on. The default is XjetStudio's deep blue.
     void setBackground(const QColor& color);
     QColor background() const { return m_Background; }
     static QColor defaultBackground() { return QColor(0x33, 0x33, 0x66); }
+    // The bottom of the gradient, which is used when it is on.
+    void setBackgroundBottom(const QColor& color);
+    QColor backgroundBottom() const { return m_BackgroundBottom; }
+    static QColor defaultBackgroundBottom() { return QColor(0x11, 0x11, 0x22); }
+    void setGradientBackground(bool enabled);
+    bool isGradientBackground() const { return m_GradientBackground; }
 
     // The color of the STL and 3MF model shown (linear rgb), at once; later
     // models are loaded with their own color argument.
@@ -109,6 +116,8 @@ class Viewport3D : public QWidget
     void rebuildSceneGraph();
     void showGizmoMenu();
     vsg::vec3 backgroundLinear() const;
+    // Pushes the background colors to whatever draws them.
+    void applyBackground();
     void addKeyViewpoints(const vsg::dvec3& center, double distance);
 
     vsg::ref_ptr<vsg::WindowTraits> m_Traits;
@@ -126,6 +135,9 @@ class Viewport3D : public QWidget
     vsg::dbox m_ModelBounds;
     CompactSource m_Compact; // of the model, when it is one
     QColor m_Background = defaultBackground();
+    QColor m_BackgroundBottom = defaultBackgroundBottom();
+    bool m_GradientBackground = false;
+    vsg::ref_ptr<GradientBackground> m_Gradient; // while it is in the scene graph
     bool m_AmbientOcclusion = false;
     vsg::ref_ptr<AmbientOcclusion> m_Occlusion; // while it is in the scene graph
     vsg::ref_ptr<AmbientOcclusionUpdater> m_OcclusionUpdater;
