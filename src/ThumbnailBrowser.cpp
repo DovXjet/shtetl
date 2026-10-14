@@ -89,7 +89,7 @@ ThumbnailBrowser::ThumbnailBrowser(ThumbnailService* service, QWidget* parent) :
   m_View->setUniformItemSizes(true);
   m_View->setWordWrap(true);
   m_View->setEditTriggers(QAbstractItemView::NoEditTriggers);
-  m_View->setSelectionMode(QAbstractItemView::SingleSelection);
+  m_View->setSelectionMode(QAbstractItemView::ExtendedSelection);
   layout->addWidget(m_View, 1);
 
   // Smooth scrolling: per-pixel positions; wheel notches move a spring's
@@ -303,14 +303,38 @@ void ThumbnailBrowser::removeFiles(const QStringList& paths)
   }
 }
 
+QStringList ThumbnailBrowser::selectedFiles() const
+{
+  QStringList files;
+  for (const QModelIndex& index : m_View->selectionModel()->selectedIndexes())
+    if (!index.data(IsDirRole).toBool()) files << index.data(PathRole).toString();
+  files.sort(Qt::CaseInsensitive);
+  return files;
+}
+
 void ThumbnailBrowser::copyFileToClipboard(const QString& path)
 {
-  const QUrl url = QUrl::fromLocalFile(path);
+  copyFilesToClipboard({path});
+}
+
+void ThumbnailBrowser::copyFilesToClipboard(const QStringList& paths)
+{
+  if (paths.isEmpty()) return;
+  QList<QUrl> urls;
+  QStringList nativePaths;
+  QByteArray gnome = "copy";
+  for (const QString& path : paths)
+  {
+    const QUrl url = QUrl::fromLocalFile(path);
+    urls << url;
+    nativePaths << QDir::toNativeSeparators(path);
+    gnome += "\n" + url.toEncoded();
+  }
   auto* mime = new QMimeData;
-  mime->setUrls({url});
-  mime->setText(QDir::toNativeSeparators(path));
+  mime->setUrls(urls);
+  mime->setText(nativePaths.join('\n'));
 #ifndef Q_OS_WIN
-  mime->setData("x-special/gnome-copied-files", ("copy\n" + url.toEncoded()));
+  mime->setData("x-special/gnome-copied-files", gnome);
 #endif
   QApplication::clipboard()->setMimeData(mime);
 }
@@ -319,14 +343,19 @@ void ThumbnailBrowser::onContextMenu(const QPoint& pos)
 {
   const QModelIndex index = m_View->indexAt(pos);
   if (!index.isValid() || index.data(IsDirRole).toBool()) return;
+  // Acts on the whole selection when the clicked file is part of it.
+  QStringList paths = selectedFiles();
   const QString path = index.data(PathRole).toString();
+  if (!paths.contains(path)) paths = {path};
+  const bool many = paths.size() > 1;
 
   QMenu menu(this);
-  QAction* copy = menu.addAction("Copy");
-  QAction* refresh = menu.addAction("Refresh thumbnail");
+  QAction* copy = menu.addAction(many ? QString("Copy %1 files").arg(paths.size()) : QString("Copy"));
+  QAction* refresh = menu.addAction(many ? QString("Refresh %1 thumbnails").arg(paths.size()) : QString("Refresh thumbnail"));
   const QAction* chosen = menu.exec(m_View->viewport()->mapToGlobal(pos));
-  if (chosen == copy) copyFileToClipboard(path);
-  else if (chosen == refresh) refreshThumbnail(path);
+  if (chosen == copy) copyFilesToClipboard(paths);
+  else if (chosen == refresh)
+    for (const QString& p : paths) refreshThumbnail(p);
 }
 
 void ThumbnailBrowser::refreshThumbnail(const QString& path)

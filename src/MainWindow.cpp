@@ -643,6 +643,14 @@ void MainWindow::autoReload()
 // managers copy files, plus the GNOME/KDE extras and the path as text.
 void MainWindow::copyToClipboard()
 {
+  // Several models selected in the browser are copied together.
+  const QStringList selected = m_Browser->selectedFiles();
+  if (selected.size() > 1)
+  {
+    ThumbnailBrowser::copyFilesToClipboard(selected);
+    statusBar()->showMessage(QString("Copied %1 files to the clipboard").arg(selected.size()), 3000);
+    return;
+  }
   if (m_CurrentFile.isEmpty()) return;
   ThumbnailBrowser::copyFileToClipboard(m_CurrentFile);
   statusBar()->showMessage("Copied " + QFileInfo(m_CurrentFile).fileName() + " to the clipboard", 3000);

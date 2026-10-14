@@ -42,8 +42,12 @@ class ThumbnailBrowser : public QWidget
     // without changing the selection or loading anything.
     void removeFiles(const QStringList& paths);
 
-    // Puts the file on the system clipboard, as a file manager's Copy does.
+    // The selected model files (the view allows several), sorted by path.
+    QStringList selectedFiles() const;
+
+    // Puts the file(s) on the system clipboard, as a file manager's Copy does.
     static void copyFileToClipboard(const QString& path);
+    static void copyFilesToClipboard(const QStringList& paths);
 
   signals:
     // The current model changed (click or arrow keys).
