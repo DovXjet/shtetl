@@ -24,6 +24,11 @@ vsg::ref_ptr<vsg::Options> createModelOptions()
   auto options = vsg::Options::create();
   options->paths = vsg::getEnvPaths("VSG_FILE_PATH");
   options->add(vsgXchange::all::create());
+  // assimp leaves faces without normals unlit (a flat silhouette) unless asked to
+  // generate them; this only fills in meshes that have none, e.g. OBJ without "vn".
+#if __has_include(<vsgXchange/assimp.h>)
+  options->setValue(vsgXchange::assimp::generate_sharp_normals, true);
+#endif
   return options;
 }
 
