@@ -6,6 +6,7 @@
   "dependencies": [
     "spdlog",
     "libzip",
+    "opencascade",
     {
       "name": "vsg",
       "features": [

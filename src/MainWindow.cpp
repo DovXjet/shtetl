@@ -7,6 +7,7 @@
 #include "NavigationStyles.h"
 #include "OpenFileDialog.h"
 #include "SceneSettingsDialog.h"
+#include "Preferences.h"
 #include "ThumbnailBrowser.h"
 #include "ThumbnailService.h"
 #include "Viewport3D.h"
@@ -181,6 +182,8 @@ void MainWindow::createMenus()
   updateRecentMenu();
   fileMenu->addSeparator();
   fileMenu->addAction("&Reload", QKeySequence("F5"), this, &MainWindow::reload);
+  fileMenu->addSeparator();
+  fileMenu->addAction("&Preferences...", this, &MainWindow::showPreferences);
   fileMenu->addSeparator();
   auto* quit = fileMenu->addAction("&Quit", qApp, &QApplication::quit);
   quit->setShortcuts({QKeySequence::Quit, QKeySequence("Q")});
@@ -412,6 +415,13 @@ void MainWindow::createMenus()
 
   auto* helpMenu = menuBar()->addMenu("&Help");
   helpMenu->addAction("About shtetl", this, &MainWindow::showAboutDialog);
+}
+
+void MainWindow::showPreferences()
+{
+  QSettings settings;
+  Preferences dialog(&settings, this);
+  dialog.exec();
 }
 
 void MainWindow::showAboutDialog()

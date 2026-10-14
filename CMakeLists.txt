@@ -32,6 +32,8 @@ find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets)
 # libzip reads the zip of a 3MF file (ZIP64 too, which QZipReader cannot).
 find_package(libzip CONFIG REQUIRED)
 find_package(OpenMP QUIET)
+# OpenCASCADE reads STEP and IGES files; without it those are not opened.
+find_package(OpenCASCADE CONFIG QUIET)
 
 # The system-wide vsgQt install (/usr/local) was built against Qt5, so build
 # vsgQt from source against Qt6 and the system vsg - same as RobotMotion.
@@ -73,6 +75,7 @@ add_executable(shtetl
   src/ThumbnailService.cpp
   src/ThumbnailBrowser.cpp
   src/OpenFileDialog.cpp
+  src/Preferences.cpp
 )
 target_include_directories(shtetl PRIVATE src)
 if(WIN32)
@@ -113,6 +116,15 @@ endif()
 target_link_libraries(shtetl PRIVATE libzip::zip vsg::vsg vsgXchange::vsgXchange vsgQt::vsgQt QtAwesome spdlog::spdlog Qt6::Core Qt6::Gui Qt6::Widgets)
 if(OpenMP_CXX_FOUND)
   target_link_libraries(shtetl PRIVATE OpenMP::OpenMP_CXX)
+endif()
+if(OpenCASCADE_FOUND)
+  message(STATUS "OpenCASCADE ${OpenCASCADE_VERSION}: STEP and IGES import enabled")
+  target_sources(shtetl PRIVATE src/CadReader.cpp)
+  target_compile_definitions(shtetl PRIVATE SHTETL_HAS_CAD)
+  target_include_directories(shtetl PRIVATE ${OpenCASCADE_INCLUDE_DIR})
+  target_link_libraries(shtetl PRIVATE TKDESTEP TKDEIGES TKBRep TKMesh TKGeomBase TKG3d TKMath TKTopAlgo TKGeomAlgo TKernel)
+else()
+  message(STATUS "OpenCASCADE not found: STEP and IGES import disabled")
 endif()
 if(UNIX AND NOT APPLE)
   target_link_libraries(shtetl PRIVATE pthread ${CMAKE_DL_LIBS})

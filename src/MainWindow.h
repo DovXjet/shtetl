@@ -40,6 +40,7 @@ class MainWindow : public QMainWindow
     void saveWindowSettings(); // geometry, dock state and width
     void createMenus();
     void showAboutDialog();
+    void showPreferences();
     void copyToClipboard();
     void openFileDialog();
     void openDirectoryDialog();

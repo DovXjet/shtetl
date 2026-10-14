@@ -226,6 +226,7 @@ const QStringList& modelExtensions()
     for (auto& reader : readers) reader->getFeatures(features);
 
     // Formats that assimp lists but that are not self-contained 3D models.
+    // (STEP is added back below, when the CAD reader is built.)
     static const std::set<std::string> notModels = {".txt", ".xml", ".dat", ".raw", ".json", ".bin", ".zip", ".png", ".jpg", ".jpeg",
                                                          // assimp's STEP reader only handles IFC data, not CAD STEP files.
                                                          ".stp", ".step"};
@@ -239,6 +240,10 @@ const QStringList& modelExtensions()
       if (e.empty() || notModels.count(e)) continue;
       unique.insert(QString::fromStdString(e));
     }
+#ifdef SHTETL_HAS_CAD
+    // Read by loadModel() with OpenCASCADE, not through vsg.
+    for (const char* ext : {".step", ".stp", ".iges", ".igs"}) unique.insert(ext);
+#endif
     return QStringList(unique.begin(), unique.end());
   }();
   return extensions;

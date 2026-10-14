@@ -3,6 +3,9 @@
 #include "ModelFormats.h"
 #include "QtPathUtils.h"
 #include "ShaderResources.h"
+#ifdef SHTETL_HAS_CAD
+#include "CadReader.h"
+#endif
 
 #include <vsg/animation/FindAnimations.h>
 #include <vsg/io/read.h>
@@ -373,12 +376,32 @@ namespace
   }
 } // namespace
 
+#ifdef SHTETL_HAS_CAD
+LoadedModel loadCad(const QString& path, const std::atomic<bool>* cancel, const vsg::vec4& diffuse, const LoadProgress& progress)
+{
+  // Reading and meshing the CAD file is the first 70 percent, packing the rest.
+  const LoadProgress readProgress = [&progress](int p) {
+    if (progress) progress(p * 70 / 100);
+  };
+  const LoadProgress packProgress = [&progress](int p) {
+    if (progress) progress(70 + p * 30 / 100);
+  };
+  const IndexedMesh mesh = readCad(path, cadDeflectionFromSettings(), cancel, readProgress);
+  return pack(mesh.triangles.size(), [&mesh](size_t i, vsg::vec3* p) {
+    for (int v = 0; v < 3; ++v) p[v] = mesh.vertices[mesh.triangles[i][v]];
+  }, cancel, diffuse, packProgress);
+}
+#endif
+
 LoadedModel loadModel(const QString& path, vsg::ref_ptr<vsg::Options> options, const std::atomic<bool>* cancel, const vsg::vec4& diffuse,
                      const LoadProgress& progress)
 {
   const QString ext = QFileInfo(path).suffix().toLower();
   if (ext == "stl") return loadStl(path, cancel, diffuse, progress);
   if (ext == "3mf") return load3MF(path, cancel, diffuse, progress);
+#ifdef SHTETL_HAS_CAD
+  if (isCadExtension(ext)) return loadCad(path, cancel, diffuse, progress);
+#endif
 
   spdlog::info("loadModel: reading {}", path.toStdString());
   spdlog::default_logger()->flush(); // the log must survive a crash
