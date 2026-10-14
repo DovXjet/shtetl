@@ -208,6 +208,11 @@ namespace
   }
 } // namespace
 
+vsg::ref_ptr<vsg::Node> makeCompactNode(const CompactSource& source)
+{
+  return makeNode(source, false);
+}
+
 vsg::ref_ptr<vsg::Node> makeCompactGBufferNode(const CompactSource& source)
 {
   return makeNode(source, true);

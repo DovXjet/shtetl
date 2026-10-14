@@ -153,10 +153,6 @@ namespace
     return Value <= 0.04045f ? Value / 12.92f : std::pow((Value + 0.055f) / 1.055f, 2.4f);
   }
 
-  // XjetStudio's viewport background, a deep blue (it is linear: the swapchain
-  // is sRGB and converts it when it is stored).
-  const vsg::vec3 Background{0.033f, 0.033f, 0.133f};
-
   // The occlusion: how far it reaches (as a fraction of the model's radius)
   // and how much it darkens.
   constexpr double AmbientOcclusionRadius = 0.12;
@@ -453,7 +449,7 @@ void Viewport3D::buildSceneGraph()
     auto gbufferScene = vsg::Group::create();
     gbufferScene->addChild(makeCompactGBufferNode(m_Compact));
     const VkExtent2D occlusionExtent = m_PixelExtent.width > 0 ? m_PixelExtent : extent;
-    m_Occlusion = AmbientOcclusion::create(device, m_Camera, gbufferScene, occlusionExtent, m_FitRadius * AmbientOcclusionRadius, Background);
+    m_Occlusion = AmbientOcclusion::create(device, m_Camera, gbufferScene, occlusionExtent, m_FitRadius * AmbientOcclusionRadius, backgroundLinear());
     m_Occlusion->setStrength(AmbientOcclusionStrength);
     m_OcclusionUpdater = AmbientOcclusionUpdater::create();
     m_OcclusionUpdater->occlusion = m_Occlusion;
@@ -470,7 +466,7 @@ void Viewport3D::buildSceneGraph()
 
   m_RenderGraph = vsg::RenderGraph::create(m_Window->windowAdapter);
   m_RenderGraph->addChild(view3D);
-  m_RenderGraph->setClearValues(VkClearColorValue{{Background.r, Background.g, Background.b, 1.0f}});
+  m_RenderGraph->setClearValues(VkClearColorValue{{backgroundLinear().r, backgroundLinear().g, backgroundLinear().b, 1.0f}});
   auto commandGraph = vsg::CommandGraph::create(m_Window->windowAdapter);
   if (m_Occlusion)
     for (auto& graph : m_Occlusion->renderGraphs()) commandGraph->addChild(graph);
@@ -565,6 +561,37 @@ void Viewport3D::setAmbientOcclusion(bool enabled)
 {
   if (enabled == m_AmbientOcclusion) return;
   m_AmbientOcclusion = enabled;
+  if (m_Camera && m_Window && m_Window->windowAdapter) rebuildSceneGraph();
+}
+
+vsg::vec3 Viewport3D::backgroundLinear() const
+{
+  // The swapchain is sRGB and converts the linear clear color when it is stored.
+  return {SrgbToLinear(static_cast<float>(m_Background.redF())), SrgbToLinear(static_cast<float>(m_Background.greenF())),
+          SrgbToLinear(static_cast<float>(m_Background.blueF()))};
+}
+
+void Viewport3D::setBackground(const QColor& color)
+{
+  if (!color.isValid() || color == m_Background) return;
+  m_Background = color;
+  if (!m_Camera || !m_Window || !m_Window->windowAdapter) return;
+  // The occlusion's composition carries the background color; rebuild for it.
+  if (m_Occlusion)
+  {
+    rebuildSceneGraph();
+    return;
+  }
+  const vsg::vec3 linear = backgroundLinear();
+  m_RenderGraph->setClearValues(VkClearColorValue{{linear.r, linear.g, linear.b, 1.0f}});
+  m_Viewer->request();
+}
+
+void Viewport3D::setModelColor(const vsg::vec4& diffuse)
+{
+  if (!m_Compact || !m_Model) return;
+  m_Compact.diffuse = diffuse;
+  m_Model = makeCompactNode(m_Compact);
   if (m_Camera && m_Window && m_Window->windowAdapter) rebuildSceneGraph();
 }
 

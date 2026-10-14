@@ -11,6 +11,7 @@
 #include <QActionGroup>
 #include <QApplication>
 #include <QClipboard>
+#include <QColorDialog>
 #include <QDialog>
 #include <QDialogButtonBox>
 #include <QCloseEvent>
@@ -33,11 +34,33 @@
 #include <QUrl>
 #include <QVBoxLayout>
 
+#include <cmath>
+#include <functional>
 #include <utility>
 
 namespace
 {
   constexpr int MaxRecentFiles = 8;
+
+  // Colors are picked in sRGB; the shaders take linear values.
+  vsg::vec4 linearColor(const QColor& color)
+  {
+    auto toLinear = [](qreal c) { return c <= 0.04045 ? float(c / 12.92) : float(std::pow((c + 0.055) / 1.055, 2.4)); };
+    return vsg::vec4(toLinear(color.redF()), toLinear(color.greenF()), toLinear(color.blueF()), 1.0f);
+  }
+
+  // A color dialog that reports every change while it is open (so that it
+  // shows in the view at once). Returns the color accepted; when the dialog is
+  // cancelled, `apply` is given `initial` again and an invalid color returned.
+  QColor pickColor(QWidget* parent, const QString& title, const QColor& initial, const std::function<void(const QColor&)>& apply)
+  {
+    QColorDialog dialog(initial, parent);
+    dialog.setWindowTitle(title);
+    QObject::connect(&dialog, &QColorDialog::currentColorChanged, &dialog, apply);
+    if (dialog.exec() == QDialog::Accepted) return dialog.selectedColor();
+    apply(initial);
+    return QColor();
+  }
 } // namespace
 
 MainWindow::MainWindow()
@@ -221,6 +244,34 @@ void MainWindow::createMenus()
   // fires when the window closes and hides the dock, which would store "hidden".
   connect(dockAction, &QAction::triggered, this, [](bool show) { QSettings().setValue("View/Thumbnails", show); });
   viewMenu->addSeparator();
+
+  // Colors: the background, and the color of STL and 3MF models.
+  const QColor defaultModelColor(0xed, 0xed, 0xed); // linear 0.85, as before
+  const QColor background = settings.value("View/BackgroundColor", Viewport3D::defaultBackground()).value<QColor>();
+  m_Viewport->setBackground(background.isValid() ? background : Viewport3D::defaultBackground());
+  m_ModelColor = settings.value("View/ModelColor", defaultModelColor).value<QColor>();
+  if (!m_ModelColor.isValid()) m_ModelColor = defaultModelColor;
+  viewMenu->addAction("Background Color...", this, [this]() {
+    const QColor color = pickColor(this, "Background Color", m_Viewport->background(), [this](const QColor& c) { m_Viewport->setBackground(c); });
+    if (color.isValid()) QSettings().setValue("View/BackgroundColor", color);
+  });
+  viewMenu->addAction("Model Color...", this, [this]() {
+    auto apply = [this](const QColor& c) {
+      m_ModelColor = c;
+      m_Viewport->setModelColor(linearColor(c));
+    };
+    const QColor color = pickColor(this, "Model Color (STL and 3MF)", m_ModelColor, apply);
+    if (color.isValid()) QSettings().setValue("View/ModelColor", color);
+  });
+  viewMenu->addAction("Reset Colors", this, [this, defaultModelColor]() {
+    m_Viewport->setBackground(Viewport3D::defaultBackground());
+    QSettings settings;
+    settings.remove("View/BackgroundColor");
+    settings.remove("View/ModelColor");
+    m_ModelColor = defaultModelColor;
+    m_Viewport->setModelColor(linearColor(m_ModelColor));
+  });
+  viewMenu->addSeparator();
   auto* fit = viewMenu->addAction("Fit to Window", m_Viewport, [this]() { m_Viewport->fitAll(); });
   fit->setShortcuts({QKeySequence("Ctrl+0"), QKeySequence("F")});
   auto* ortho = viewMenu->addAction("Orthographic\tNumpad 5");
@@ -366,12 +417,13 @@ void MainWindow::loadModel(const QString& path)
   const auto cancel = m_Load.cancel;
   const auto percent = m_Load.percent;
   const auto options = m_Viewport->options();
-  m_LoadPool.start([this, id, path, cancel, percent, options]() {
+  const vsg::vec4 modelColor = linearColor(m_ModelColor);
+  m_LoadPool.start([this, id, path, cancel, percent, options, modelColor]() {
     LoadedModel model;
     QString error;
     try
     {
-      model = ::loadModel(path, options, cancel.get(), vsg::vec4(0.85f, 0.85f, 0.85f, 1.0f), [percent](int p) { percent->store(p); });
+      model = ::loadModel(path, options, cancel.get(), modelColor, [percent](int p) { percent->store(p); });
     }
     catch (const std::exception& e)
     {

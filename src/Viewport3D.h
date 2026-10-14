@@ -12,6 +12,7 @@
 #include <vsg/app/RenderGraph.h>
 #include <vsg/maths/transform.h>
 
+#include <QColor>
 #include <QString>
 #include <QTimer>
 #include <QWidget>
@@ -76,6 +77,15 @@ class Viewport3D : public QWidget
     void setAmbientOcclusion(bool enabled);
     bool isAmbientOcclusion() const { return m_AmbientOcclusion; }
 
+    // The color behind the model (sRGB). The default is XjetStudio's deep blue.
+    void setBackground(const QColor& color);
+    QColor background() const { return m_Background; }
+    static QColor defaultBackground() { return QColor(0x33, 0x33, 0x66); }
+
+    // The color of the STL and 3MF model shown (linear rgb), at once; later
+    // models are loaded with their own color argument.
+    void setModelColor(const vsg::vec4& diffuse);
+
     void toggleProjection() { setOrthographic(!m_Orthographic); }
     void setOrthographic(bool orthographic);
     bool isOrthographic() const { return m_Orthographic; }
@@ -98,6 +108,7 @@ class Viewport3D : public QWidget
     // buildSceneGraph(), keeping the viewpoint the user was looking from.
     void rebuildSceneGraph();
     void showGizmoMenu();
+    vsg::vec3 backgroundLinear() const;
     void addKeyViewpoints(const vsg::dvec3& center, double distance);
 
     vsg::ref_ptr<vsg::WindowTraits> m_Traits;
@@ -114,6 +125,7 @@ class Viewport3D : public QWidget
     vsg::ref_ptr<vsg::Node> m_Model;
     vsg::dbox m_ModelBounds;
     CompactSource m_Compact; // of the model, when it is one
+    QColor m_Background = defaultBackground();
     bool m_AmbientOcclusion = false;
     vsg::ref_ptr<AmbientOcclusion> m_Occlusion; // while it is in the scene graph
     vsg::ref_ptr<AmbientOcclusionUpdater> m_OcclusionUpdater;

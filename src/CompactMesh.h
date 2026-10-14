@@ -33,6 +33,9 @@ struct LoadedModel
     CompactSource compact;
 };
 
+// The node that draws a compact mesh into the window.
+vsg::ref_ptr<vsg::Node> makeCompactNode(const CompactSource& source);
+
 // The node that draws a compact mesh into the three targets of the G-buffer
 // (see resources/shaders/compact_mesh_gbuffer.frag).
 vsg::ref_ptr<vsg::Node> makeCompactGBufferNode(const CompactSource& source);
