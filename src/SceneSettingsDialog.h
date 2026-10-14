@@ -6,6 +6,7 @@
 #include <QDialog>
 
 class QCheckBox;
+class QComboBox;
 class QDoubleSpinBox;
 class QPushButton;
 class QSlider;
@@ -41,6 +42,7 @@ class SceneSettingsDialog : public QDialog
     void resetToDefaults();
     void updateWidgets(); // from the state
     void applyMaterial();
+    void applyPreset(int index); // of the combo box: 0 is "Custom", which changes nothing
     // Asks for a color, reporting the choice at once through `apply`;
     // cancelling restores `initial`. Returns whether a color was accepted.
     bool pickColor(const QString& title, const QColor& initial, const std::function<void(const QColor&)>& apply);
@@ -55,6 +57,7 @@ class SceneSettingsDialog : public QDialog
     QPushButton* m_ModelButton = nullptr;
     QCheckBox* m_Gradient = nullptr;
     QCheckBox* m_Override = nullptr;
+    QComboBox* m_Preset = nullptr;
     QSlider* m_MetallicSlider = nullptr;
     QSlider* m_RoughnessSlider = nullptr;
     QDoubleSpinBox* m_MetallicSpin = nullptr;

@@ -4,6 +4,7 @@
 
 #include <QCheckBox>
 #include <QColorDialog>
+#include <QComboBox>
 #include <QDoubleSpinBox>
 #include <QFormLayout>
 #include <QGroupBox>
@@ -15,6 +16,7 @@
 
 #include <cmath>
 #include <functional>
+#include <vector>
 
 namespace
 {
@@ -22,6 +24,29 @@ namespace
   constexpr double DefaultMetallic = 0.0;
   constexpr double DefaultRoughness = 0.5;
   constexpr int SliderSteps = 1000;
+
+  // Looks for the PBR settings. A preset with a color also sets the color of
+  // STL and 3MF models (a metal has one of its own); the others keep the color.
+  struct Preset
+  {
+      const char* name;
+      double metallic, roughness;
+      QColor color; // invalid: unchanged
+  };
+
+  const std::vector<Preset>& presets()
+  {
+    static const std::vector<Preset> list = {
+        {"Plastic", 0.0, 0.45, QColor()},
+        {"Ceramic", 0.0, 0.10, QColor()},
+        {"Rubber", 0.0, 0.90, QColor()},
+        {"Brushed metal", 1.0, 0.40, QColor()},
+        {"Polished metal", 1.0, 0.10, QColor()},
+        {"Gold", 1.0, 0.20, QColor(0xff, 0xe6, 0x9b)},
+        {"Copper", 1.0, 0.30, QColor(0xfa, 0xd0, 0xc0)},
+    };
+    return list;
+  }
 
   void setSwatch(QPushButton* button, const QColor& color)
   {
@@ -81,6 +106,11 @@ SceneSettingsDialog::SceneSettingsDialog(Viewport3D* viewport, QWidget* parent) 
   m_Override = new QCheckBox("Use PBR shader", this);
   m_Override->setToolTip("Draw STL and 3MF models with the physically based shader, and replace the metallic and roughness of glTF materials");
   materialsForm->addRow(m_Override);
+  m_Preset = new QComboBox(this);
+  m_Preset->addItem("Custom");
+  for (const Preset& preset : presets()) m_Preset->addItem(preset.name);
+  m_Preset->setToolTip("Sets the metallic and roughness (and, for the metals, the color of STL and 3MF models) to a typical material");
+  materialsForm->addRow("Preset:", m_Preset);
   // A slider with a spin box beside it, for a value from 0 to 1.
   auto valueRow = [this](QSlider*& slider, QDoubleSpinBox*& spin) {
     slider = new QSlider(Qt::Horizontal, this);
@@ -157,6 +187,7 @@ SceneSettingsDialog::SceneSettingsDialog(Viewport3D* viewport, QWidget* parent) 
     applyMaterial();
     updateWidgets();
   });
+  connect(m_Preset, &QComboBox::activated, this, &SceneSettingsDialog::applyPreset);
   connect(reset, &QPushButton::clicked, this, &SceneSettingsDialog::resetToDefaults);
   connect(close, &QPushButton::clicked, this, &QDialog::hide);
   updateWidgets();
@@ -181,6 +212,24 @@ bool SceneSettingsDialog::pickColor(const QString& title, const QColor& initial,
   return false;
 }
 
+void SceneSettingsDialog::applyPreset(int index)
+{
+  if (index < 1 || index > static_cast<int>(presets().size())) return;
+  const Preset& preset = presets()[static_cast<size_t>(index - 1)];
+  m_Metallic = preset.metallic;
+  m_Roughness = preset.roughness;
+  const bool wasPbr = m_OverrideMaterial;
+  m_OverrideMaterial = true; // choosing a material is asking to see it
+  if (preset.color.isValid() && preset.color != m_ModelColor)
+  {
+    m_ModelColor = preset.color;
+    emit modelColorChanged(m_ModelColor);
+  }
+  applyMaterial();
+  updateWidgets();
+  if (!wasPbr) emit usePbrChanged(true);
+}
+
 void SceneSettingsDialog::applyMaterial()
 {
   m_Viewport->setMaterialOverride(m_OverrideMaterial, static_cast<float>(m_Metallic), static_cast<float>(m_Roughness));
@@ -189,7 +238,7 @@ void SceneSettingsDialog::applyMaterial()
 // Brings the widgets in line with the state, without feeding back into it.
 void SceneSettingsDialog::updateWidgets()
 {
-  const QSignalBlocker blockGradient(m_Gradient), blockOverride(m_Override), blockMetallicSlider(m_MetallicSlider),
+  const QSignalBlocker blockPreset(m_Preset), blockGradient(m_Gradient), blockOverride(m_Override), blockMetallicSlider(m_MetallicSlider),
       blockRoughnessSlider(m_RoughnessSlider), blockMetallicSpin(m_MetallicSpin), blockRoughnessSpin(m_RoughnessSpin);
   setSwatch(m_TopButton, m_Viewport->background());
   setSwatch(m_BottomButton, m_Viewport->backgroundBottom());
@@ -197,6 +246,11 @@ void SceneSettingsDialog::updateWidgets()
   m_Gradient->setChecked(m_Viewport->isGradientBackground());
   m_BottomButton->setEnabled(m_Viewport->isGradientBackground());
   m_Override->setChecked(m_OverrideMaterial);
+  // The preset the values match, if any.
+  int presetIndex = 0;
+  for (size_t i = 0; i < presets().size(); ++i)
+    if (std::abs(presets()[i].metallic - m_Metallic) < 0.005 && std::abs(presets()[i].roughness - m_Roughness) < 0.005) presetIndex = static_cast<int>(i) + 1;
+  m_Preset->setCurrentIndex(presetIndex);
   m_MetallicSlider->setValue(qRound(m_Metallic * SliderSteps));
   m_RoughnessSlider->setValue(qRound(m_Roughness * SliderSteps));
   m_MetallicSpin->setValue(m_Metallic);
