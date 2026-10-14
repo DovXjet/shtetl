@@ -299,6 +299,7 @@ void Viewport3D::setModel(LoadedModel loaded)
   m_Model = loaded.node;
   m_ModelBounds = loaded.bounds;
   m_Compact = loaded.compact;
+  collectMaterials();
   try
   {
     buildSceneGraph();
@@ -313,6 +314,7 @@ void Viewport3D::setModel(LoadedModel loaded)
     m_Model = oldModel;
     m_ModelBounds = oldBounds;
     m_Compact = oldCompact;
+    collectMaterials();
     loaded = {};
     try
     {
@@ -341,6 +343,7 @@ void Viewport3D::clearModel()
   m_Model = nullptr;
   m_ModelBounds = vsg::dbox();
   m_Compact = {};
+  m_PbrMaterials.clear();
   buildSceneGraph();
 }
 
@@ -620,6 +623,80 @@ void Viewport3D::setGradientBackground(bool enabled)
   // with the scene graph; the occlusion's composition just takes other colors.
   if (m_Occlusion) applyBackground();
   else if (m_Camera && m_Window && m_Window->windowAdapter) rebuildSceneGraph();
+}
+
+namespace
+{
+  // Finds the PBR material values in a loaded scene (the glTF loader puts them
+  // in the descriptor sets of its state groups).
+  class FindPbrMaterials : public vsg::Visitor
+  {
+    public:
+      std::vector<vsg::ref_ptr<vsg::PbrMaterialValue>> materials;
+
+      void apply(vsg::Object& object) override { object.traverse(*this); }
+
+      void apply(vsg::StateGroup& stateGroup) override
+      {
+        for (auto& command : stateGroup.stateCommands)
+        {
+          if (auto bind = command.cast<vsg::BindDescriptorSet>()) scan(bind->descriptorSet);
+          else if (auto binds = command.cast<vsg::BindDescriptorSets>())
+            for (auto& set : binds->descriptorSets) scan(set);
+        }
+        stateGroup.traverse(*this);
+      }
+
+    private:
+      void scan(const vsg::ref_ptr<vsg::DescriptorSet>& set)
+      {
+        if (!set) return;
+        for (auto& descriptor : set->descriptors)
+        {
+          auto buffer = descriptor.cast<vsg::DescriptorBuffer>();
+          if (!buffer) continue;
+          for (auto& info : buffer->bufferInfoList)
+            if (auto material = info ? info->data.cast<vsg::PbrMaterialValue>() : vsg::ref_ptr<vsg::PbrMaterialValue>())
+              if (std::find(materials.begin(), materials.end(), material) == materials.end()) materials.push_back(material);
+        }
+      }
+  };
+} // namespace
+
+void Viewport3D::collectMaterials()
+{
+  m_PbrMaterials.clear();
+  if (!m_Model) return;
+  FindPbrMaterials finder;
+  m_Model->accept(finder);
+  for (auto& material : finder.materials)
+  {
+    // Before the scene graph is compiled: only data that is dynamic can be
+    // changed afterwards.
+    material->properties.dataVariance = vsg::DYNAMIC_DATA;
+    m_PbrMaterials.push_back({material, material->value().metallicFactor, material->value().roughnessFactor});
+  }
+  if (!m_PbrMaterials.empty()) spdlog::debug("{} PBR material(s) found", m_PbrMaterials.size());
+  applyMaterialOverride();
+}
+
+void Viewport3D::applyMaterialOverride()
+{
+  for (auto& state : m_PbrMaterials)
+  {
+    state.material->value().metallicFactor = m_OverrideMaterial ? m_OverrideMetallic : state.metallic;
+    state.material->value().roughnessFactor = m_OverrideMaterial ? m_OverrideRoughness : state.roughness;
+    state.material->dirty();
+  }
+}
+
+void Viewport3D::setMaterialOverride(bool enabled, float metallic, float roughness)
+{
+  m_OverrideMaterial = enabled;
+  m_OverrideMetallic = metallic;
+  m_OverrideRoughness = roughness;
+  applyMaterialOverride();
+  if (m_Viewer && !m_PbrMaterials.empty()) m_Viewer->request();
 }
 
 void Viewport3D::setModelColor(const vsg::vec4& diffuse)

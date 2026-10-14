@@ -18,6 +18,7 @@
 #include <QWidget>
 
 #include <cmath>
+#include <vector>
 
 // Perspective projection that can be switched to an orthographic one with the
 // same framing at the look-at center (from RobotMotion).
@@ -93,6 +94,11 @@ class Viewport3D : public QWidget
     // models are loaded with their own color argument.
     void setModelColor(const vsg::vec4& diffuse);
 
+    // Replaces the metallic and roughness factors of the glTF (PBR) materials
+    // of the model shown, and of the ones shown later; off, the file's own
+    // values are used.
+    void setMaterialOverride(bool enabled, float metallic, float roughness);
+
     void toggleProjection() { setOrthographic(!m_Orthographic); }
     void setOrthographic(bool orthographic);
     bool isOrthographic() const { return m_Orthographic; }
@@ -118,6 +124,9 @@ class Viewport3D : public QWidget
     vsg::vec3 backgroundLinear() const;
     // Pushes the background colors to whatever draws them.
     void applyBackground();
+    // The PBR materials of m_Model, made updatable and remembered as authored.
+    void collectMaterials();
+    void applyMaterialOverride();
     void addKeyViewpoints(const vsg::dvec3& center, double distance);
 
     vsg::ref_ptr<vsg::WindowTraits> m_Traits;
@@ -137,6 +146,14 @@ class Viewport3D : public QWidget
     QColor m_Background = defaultBackground();
     QColor m_BackgroundBottom = defaultBackgroundBottom();
     bool m_GradientBackground = false;
+    struct PbrMaterialState
+    {
+        vsg::ref_ptr<vsg::PbrMaterialValue> material;
+        float metallic, roughness; // as authored
+    };
+    std::vector<PbrMaterialState> m_PbrMaterials;
+    bool m_OverrideMaterial = false;
+    float m_OverrideMetallic = 0.0f, m_OverrideRoughness = 0.5f;
     vsg::ref_ptr<GradientBackground> m_Gradient; // while it is in the scene graph
     bool m_AmbientOcclusion = false;
     vsg::ref_ptr<AmbientOcclusion> m_Occlusion; // while it is in the scene graph

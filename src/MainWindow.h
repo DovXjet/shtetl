@@ -3,7 +3,6 @@
 #include "CompactMesh.h"
 
 #include <QDateTime>
-#include <QColor>
 #include <QElapsedTimer>
 #include <QFileSystemWatcher>
 #include <QMainWindow>
@@ -15,6 +14,7 @@
 
 class QAction;
 class QProgressBar;
+class SceneSettingsDialog;
 class QCloseEvent;
 class QDockWidget;
 class QMenu;
@@ -68,9 +68,7 @@ class MainWindow : public QMainWindow
     QMenu* m_RecentMenu = nullptr;
     QAction* m_CopyAction = nullptr;
     QString m_CurrentFile;
-    // The color of STL and 3MF models (the others bring their own materials);
-    // passed to each load, and applied to the model shown when it changes.
-    QColor m_ModelColor;
+    SceneSettingsDialog* m_SceneSettings = nullptr;
 
     // The background load: on their own threads (two at most, so that a new
     // one need not wait for the cancelled one to notice), numbered so that the result of one

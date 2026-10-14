@@ -59,6 +59,7 @@ add_executable(shtetl
   src/main.cpp
   src/Logging.cpp
   src/MainWindow.cpp
+  src/SceneSettingsDialog.cpp
   src/Viewport3D.cpp
   src/CubeGizmo.cpp
   src/ModelFormats.cpp

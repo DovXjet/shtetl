@@ -4,6 +4,7 @@
 #include "Logging.h"
 #include "NavigationStyles.h"
 #include "OpenFileDialog.h"
+#include "SceneSettingsDialog.h"
 #include "ThumbnailBrowser.h"
 #include "ThumbnailService.h"
 #include "Viewport3D.h"
@@ -11,7 +12,6 @@
 #include <QActionGroup>
 #include <QApplication>
 #include <QClipboard>
-#include <QColorDialog>
 #include <QDialog>
 #include <QDialogButtonBox>
 #include <QCloseEvent>
@@ -35,32 +35,11 @@
 #include <QVBoxLayout>
 
 #include <cmath>
-#include <functional>
 #include <utility>
 
 namespace
 {
   constexpr int MaxRecentFiles = 8;
-
-  // Colors are picked in sRGB; the shaders take linear values.
-  vsg::vec4 linearColor(const QColor& color)
-  {
-    auto toLinear = [](qreal c) { return c <= 0.04045 ? float(c / 12.92) : float(std::pow((c + 0.055) / 1.055, 2.4)); };
-    return vsg::vec4(toLinear(color.redF()), toLinear(color.greenF()), toLinear(color.blueF()), 1.0f);
-  }
-
-  // A color dialog that reports every change while it is open (so that it
-  // shows in the view at once). Returns the color accepted; when the dialog is
-  // cancelled, `apply` is given `initial` again and an invalid color returned.
-  QColor pickColor(QWidget* parent, const QString& title, const QColor& initial, const std::function<void(const QColor&)>& apply)
-  {
-    QColorDialog dialog(initial, parent);
-    dialog.setWindowTitle(title);
-    QObject::connect(&dialog, &QColorDialog::currentColorChanged, &dialog, apply);
-    if (dialog.exec() == QDialog::Accepted) return dialog.selectedColor();
-    apply(initial);
-    return QColor();
-  }
 } // namespace
 
 MainWindow::MainWindow()
@@ -245,48 +224,18 @@ void MainWindow::createMenus()
   connect(dockAction, &QAction::triggered, this, [](bool show) { QSettings().setValue("View/Thumbnails", show); });
   viewMenu->addSeparator();
 
-  // Colors: the background, and the color of STL and 3MF models.
-  const QColor defaultModelColor(0xed, 0xed, 0xed); // linear 0.85, as before
-  const QColor background = settings.value("View/BackgroundColor", Viewport3D::defaultBackground()).value<QColor>();
-  m_Viewport->setBackground(background.isValid() ? background : Viewport3D::defaultBackground());
-  m_ModelColor = settings.value("View/ModelColor", defaultModelColor).value<QColor>();
-  if (!m_ModelColor.isValid()) m_ModelColor = defaultModelColor;
-  viewMenu->addAction("Background Color...", this, [this]() {
-    const QColor color = pickColor(this, "Background Color", m_Viewport->background(), [this](const QColor& c) { m_Viewport->setBackground(c); });
-    if (color.isValid()) QSettings().setValue("View/BackgroundColor", color);
+  // The scene settings (background, model color, glTF materials), in a window
+  // of their own; it restores them and applies them to the view.
+  m_SceneSettings = new SceneSettingsDialog(m_Viewport, this);
+  connect(m_SceneSettings, &SceneSettingsDialog::modelColorChanged, this, [this](const QColor& color) { m_Viewport->setModelColor(linearColor(color)); });
+  auto* sceneSettings = viewMenu->addAction("Scene &Settings...", this, [this]() {
+    m_SceneSettings->show();
+    m_SceneSettings->raise();
+    m_SceneSettings->activateWindow();
   });
-  const QColor bottom = settings.value("View/BackgroundBottomColor", Viewport3D::defaultBackgroundBottom()).value<QColor>();
-  m_Viewport->setBackgroundBottom(bottom.isValid() ? bottom : Viewport3D::defaultBackgroundBottom());
-  auto* gradient = viewMenu->addAction("Gradient Background");
-  gradient->setCheckable(true);
-  gradient->setStatusTip("Fade the background from the Background Color at the top to the Gradient Bottom Color");
-  connect(gradient, &QAction::toggled, this, [this](bool on) {
-    m_Viewport->setGradientBackground(on);
-    QSettings().setValue("View/GradientBackground", on);
-  });
-  gradient->setChecked(settings.value("View/GradientBackground", false).toBool());
-  viewMenu->addAction("Gradient Bottom Color...", this, [this]() {
-    const QColor color = pickColor(this, "Gradient Bottom Color", m_Viewport->backgroundBottom(), [this](const QColor& c) { m_Viewport->setBackgroundBottom(c); });
-    if (color.isValid()) QSettings().setValue("View/BackgroundBottomColor", color);
-  });
-  viewMenu->addAction("Model Color...", this, [this]() {
-    auto apply = [this](const QColor& c) {
-      m_ModelColor = c;
-      m_Viewport->setModelColor(linearColor(c));
-    };
-    const QColor color = pickColor(this, "Model Color (STL and 3MF)", m_ModelColor, apply);
-    if (color.isValid()) QSettings().setValue("View/ModelColor", color);
-  });
-  viewMenu->addAction("Reset Colors", this, [this, defaultModelColor]() {
-    m_Viewport->setBackground(Viewport3D::defaultBackground());
-    m_Viewport->setBackgroundBottom(Viewport3D::defaultBackgroundBottom());
-    QSettings settings;
-    settings.remove("View/BackgroundColor");
-    settings.remove("View/BackgroundBottomColor");
-    settings.remove("View/ModelColor");
-    m_ModelColor = defaultModelColor;
-    m_Viewport->setModelColor(linearColor(m_ModelColor));
-  });
+  sceneSettings->setShortcut(QKeySequence("F8"));
+  addAction(sceneSettings); // so that the shortcut works while the menu bar is hidden
+  sceneSettings->setStatusTip("Background, model color and glTF material properties");
   viewMenu->addSeparator();
   auto* fit = viewMenu->addAction("Fit to Window", m_Viewport, [this]() { m_Viewport->fitAll(); });
   fit->setShortcuts({QKeySequence("Ctrl+0"), QKeySequence("F")});
@@ -433,7 +382,7 @@ void MainWindow::loadModel(const QString& path)
   const auto cancel = m_Load.cancel;
   const auto percent = m_Load.percent;
   const auto options = m_Viewport->options();
-  const vsg::vec4 modelColor = linearColor(m_ModelColor);
+  const vsg::vec4 modelColor = linearColor(m_SceneSettings->modelColor());
   m_LoadPool.start([this, id, path, cancel, percent, options, modelColor]() {
     LoadedModel model;
     QString error;
