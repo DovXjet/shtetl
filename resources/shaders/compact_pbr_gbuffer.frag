@@ -5,7 +5,7 @@
 // the physically based lighting; the targets are those of
 // compact_mesh_gbuffer.frag.
 
-#pragma include_common
+#pragma include compact_pbr_common
 
 layout(location = 0) out vec4 outPosition;
 layout(location = 1) out vec4 outNormal;

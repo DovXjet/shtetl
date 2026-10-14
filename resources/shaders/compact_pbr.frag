@@ -4,7 +4,7 @@
 // The compact meshes with the physically based lighting (see
 // compact_pbr_common.glsl, which is pasted in below), faces lit from both sides.
 
-#pragma include_common
+#pragma include compact_pbr_common
 
 layout(location = 0) out vec4 outColor;
 

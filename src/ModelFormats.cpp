@@ -1,5 +1,9 @@
 #include "ModelFormats.h"
 
+#include "Logging.h"
+#include "ShaderResources.h"
+
+#include <vsg/all.h>
 #include <vsg/io/read.h>
 #include <vsg/io/VSG.h>
 #include <vsgXchange/all.h>
@@ -21,6 +25,62 @@ vsg::ref_ptr<vsg::Options> createModelOptions()
   options->paths = vsg::getEnvPaths("VSG_FILE_PATH");
   options->add(vsgXchange::all::create());
   return options;
+}
+
+namespace
+{
+  // Finds the fragment shaders of VSG's PBR shader in a loaded scene graph and
+  // adds the studio environment of pbr_environment.glsl to their lighting.
+  class AddEnvironment : public vsg::Visitor
+  {
+    public:
+      void apply(vsg::Object& object) override { object.traverse(*this); }
+
+      void apply(vsg::StateGroup& stateGroup) override
+      {
+        for (auto& command : stateGroup.stateCommands)
+          if (auto bind = command.cast<vsg::BindGraphicsPipeline>())
+            if (bind->pipeline)
+              for (auto& stage : bind->pipeline->stages) patch(stage);
+        stateGroup.traverse(*this);
+      }
+
+      int patched = 0;
+
+    private:
+      void patch(const vsg::ref_ptr<vsg::ShaderStage>& stage)
+      {
+        if (!stage || stage->stage != VK_SHADER_STAGE_FRAGMENT_BIT || !stage->module) return;
+        std::string source = stage->module->source;
+        const std::string mainAnchor = "void main()";
+        const std::string emissiveAnchor = "color += emissive;";
+        const size_t mainAt = source.find(mainAnchor);
+        const size_t emissiveAt = source.find(emissiveAnchor);
+        // Another shader (Phong, flat, ...), or one that is done already.
+        if (mainAt == std::string::npos || emissiveAt == std::string::npos || emissiveAt < mainAt || source.find("environmentLighting") != std::string::npos) return;
+        if (source.find("PbrMaterial") == std::string::npos) return;
+        // The call goes in first, being later in the text.
+        source.insert(emissiveAt, "if (pbr.specularFactor.a > 1.5) color += environmentLighting(n, v, baseColor.rgb, metallic, perceptualRoughness, ambientOcclusion);\n    ");
+        source.insert(mainAt, expandShaderIncludes("#pragma include pbr_environment\n") + "\n");
+        stage->module = vsg::ShaderModule::create(source, stage->module->hints);
+        ++patched;
+      }
+  };
+} // namespace
+
+void addEnvironmentLighting(vsg::ref_ptr<vsg::Node> node)
+{
+  if (!node) return;
+  try
+  {
+    AddEnvironment visitor;
+    node->accept(visitor);
+    if (visitor.patched > 0) spdlog::debug("Environment lighting added to {} shader(s)", visitor.patched);
+  }
+  catch (const std::exception& e)
+  {
+    spdlog::warn("No environment lighting for this model: {}", e.what());
+  }
 }
 
 const QStringList& modelExtensions()

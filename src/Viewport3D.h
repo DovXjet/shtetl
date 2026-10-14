@@ -128,6 +128,8 @@ class Viewport3D : public QWidget
     // The PBR materials of m_Model, made updatable and remembered as authored.
     void collectMaterials();
     void applyMaterialOverride();
+    // Off while glTF materials are lit by the environment; other models (assimp's Phong materials) still need them.
+    float studioLightsScale() const { return m_OverrideMaterial && !m_PbrMaterials.empty() ? 0.0f : 1.0f; }
     // The STL/3MF model: its PBR material's values, and the shader that is in use.
     void updateCompactMaterial(bool rebuild);
     void addKeyViewpoints(const vsg::dvec3& center, double distance);
@@ -144,6 +146,7 @@ class Viewport3D : public QWidget
     vsg::ref_ptr<vsg::Visitor> m_ContextClick;
     vsg::ref_ptr<vsg::RenderGraph> m_RenderGraph;
     vsg::ref_ptr<vsg::Node> m_Model;
+    vsg::ref_ptr<vsg::Node> m_StudioLights; // the lights of the scene graph
     vsg::dbox m_ModelBounds;
     CompactSource m_Compact; // of the model, when it is one
     QColor m_Background = defaultBackground();
@@ -153,6 +156,7 @@ class Viewport3D : public QWidget
     {
         vsg::ref_ptr<vsg::PbrMaterialValue> material;
         float metallic, roughness; // as authored
+        float specularAlpha;       // ditto: the alpha of the specularFactor tells the shader to light with the environment
     };
     std::vector<PbrMaterialState> m_PbrMaterials;
     bool m_OverrideMaterial = false;

@@ -28,9 +28,12 @@ class SceneSettingsDialog : public QDialog
 
     // The color STL and 3MF models are loaded with.
     QColor modelColor() const { return m_ModelColor; }
+    bool usePbr() const { return m_OverrideMaterial; }
+    void setUsePbr(bool on); // as the checkbox
 
   signals:
     void modelColorChanged(const QColor& color);
+    void usePbrChanged(bool on);
 
   private:
     void hideEvent(QHideEvent* event) override;

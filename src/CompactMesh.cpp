@@ -2,6 +2,7 @@
 
 #include "ModelFormats.h"
 #include "QtPathUtils.h"
+#include "ShaderResources.h"
 
 #include <vsg/io/read.h>
 #include <vsg/utils/ComputeBounds.h>
@@ -69,10 +70,7 @@ namespace
     if (pbr)
     {
       // The lighting is shared by the two passes: pasted in where they ask.
-      fragmentSource = resourceText(gbuffer ? ":/shaders/compact_pbr_gbuffer.frag" : ":/shaders/compact_pbr.frag");
-      const std::string marker = "#pragma include_common";
-      const auto at = fragmentSource.find(marker);
-      if (at != std::string::npos) fragmentSource.replace(at, marker.size(), resourceText(":/shaders/compact_pbr_common.glsl"));
+      fragmentSource = expandShaderIncludes(resourceText(gbuffer ? ":/shaders/compact_pbr_gbuffer.frag" : ":/shaders/compact_pbr.frag"));
     }
     else
       fragmentSource = resourceText(gbuffer ? ":/shaders/compact_mesh_gbuffer.frag" : ":/shaders/compact_mesh.frag");
@@ -310,6 +308,8 @@ LoadedModel loadModel(const QString& path, vsg::ref_ptr<vsg::Options> options, c
 
   auto node = vsg::read_cast<vsg::Node>(shtetl::pathToUtf8(shtetl::qStringToPath(path)), options);
   if (!node) throw std::runtime_error("Could not read " + path.toStdString());
+
+  addEnvironmentLighting(node);
 
   LoadedModel model;
   model.node = node;

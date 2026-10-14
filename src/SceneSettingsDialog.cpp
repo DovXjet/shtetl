@@ -135,6 +135,7 @@ SceneSettingsDialog::SceneSettingsDialog(Viewport3D* viewport, QWidget* parent) 
     m_OverrideMaterial = on;
     applyMaterial();
     updateWidgets();
+    emit usePbrChanged(on);
   });
   connect(m_MetallicSlider, &QSlider::valueChanged, this, [this](int v) {
     m_Metallic = double(v) / SliderSteps;
@@ -212,11 +213,18 @@ void SceneSettingsDialog::resetToDefaults()
   m_Viewport->setGradientBackground(false);
   m_ModelColor = DefaultModelColor;
   emit modelColorChanged(m_ModelColor);
+  const bool wasPbr = m_OverrideMaterial;
   m_OverrideMaterial = false;
   m_Metallic = DefaultMetallic;
   m_Roughness = DefaultRoughness;
   applyMaterial();
   updateWidgets();
+  if (wasPbr) emit usePbrChanged(false);
+}
+
+void SceneSettingsDialog::setUsePbr(bool on)
+{
+  m_Override->setChecked(on);
 }
 
 void SceneSettingsDialog::hideEvent(QHideEvent* event)

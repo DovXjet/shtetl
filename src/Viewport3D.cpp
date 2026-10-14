@@ -376,7 +376,9 @@ void Viewport3D::rebuildSceneGraph()
 void Viewport3D::buildSceneGraph()
 {
   auto root = vsg::Group::create();
-  root->addChild(createStudioLights());
+  m_StudioLights = createStudioLights();
+  scaleStudioLights(m_StudioLights, studioLightsScale());
+  root->addChild(m_StudioLights);
 
   vsg::dvec3 center(0.0, 0.0, 0.0);
   double radius = 1.0;
@@ -676,7 +678,7 @@ void Viewport3D::collectMaterials()
     // Before the scene graph is compiled: only data that is dynamic can be
     // changed afterwards.
     material->properties.dataVariance = vsg::DYNAMIC_DATA;
-    m_PbrMaterials.push_back({material, material->value().metallicFactor, material->value().roughnessFactor});
+    m_PbrMaterials.push_back({material, material->value().metallicFactor, material->value().roughnessFactor, material->value().specularFactor.w});
   }
   if (!m_PbrMaterials.empty()) spdlog::debug("{} PBR material(s) found", m_PbrMaterials.size());
   applyMaterialOverride();
@@ -688,6 +690,8 @@ void Viewport3D::applyMaterialOverride()
   {
     state.material->value().metallicFactor = m_OverrideMaterial ? m_OverrideMetallic : state.metallic;
     state.material->value().roughnessFactor = m_OverrideMaterial ? m_OverrideRoughness : state.roughness;
+    // Lit by the environment (see ModelFormats.cpp), which the studio lights then leave to.
+    state.material->value().specularFactor.w = m_OverrideMaterial ? 2.0f : state.specularAlpha;
     state.material->dirty();
   }
 }
@@ -698,8 +702,9 @@ void Viewport3D::setMaterialOverride(bool enabled, float metallic, float roughne
   m_OverrideMetallic = metallic;
   m_OverrideRoughness = roughness;
   applyMaterialOverride();
+  if (m_StudioLights) scaleStudioLights(m_StudioLights, studioLightsScale());
   updateCompactMaterial(true);
-  if (m_Viewer && !m_PbrMaterials.empty()) m_Viewer->request();
+  if (m_Viewer) m_Viewer->request();
 }
 
 void Viewport3D::updateCompactMaterial(bool rebuild)

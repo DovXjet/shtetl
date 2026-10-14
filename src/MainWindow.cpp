@@ -235,7 +235,16 @@ void MainWindow::createMenus()
   });
   sceneSettings->setShortcut(QKeySequence("F8"));
   addAction(sceneSettings); // so that the shortcut works while the menu bar is hidden
-  sceneSettings->setStatusTip("Background, model color and glTF material properties");
+  sceneSettings->setStatusTip("Background, model color and material properties");
+  // The same switch as in the settings window.
+  auto* usePbr = viewMenu->addAction("Use &PBR Shader");
+  usePbr->setCheckable(true);
+  usePbr->setShortcut(QKeySequence("P"));
+  usePbr->setStatusTip("Draw with the physically based shader and its studio environment (metallic and roughness are set in Scene Settings)");
+  addAction(usePbr);
+  usePbr->setChecked(m_SceneSettings->usePbr());
+  connect(usePbr, &QAction::toggled, m_SceneSettings, &SceneSettingsDialog::setUsePbr);
+  connect(m_SceneSettings, &SceneSettingsDialog::usePbrChanged, usePbr, &QAction::setChecked);
   viewMenu->addSeparator();
   auto* fit = viewMenu->addAction("Fit to Window", m_Viewport, [this]() { m_Viewport->fitAll(); });
   fit->setShortcuts({QKeySequence("Ctrl+0"), QKeySequence("F")});
