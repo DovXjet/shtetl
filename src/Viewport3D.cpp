@@ -28,6 +28,7 @@
 #include <QPlatformSurfaceEvent>
 #include <QResizeEvent>
 #include <QShowEvent>
+#include <QThread>
 #include <QTimer>
 
 #include <algorithm>
@@ -61,6 +62,17 @@ namespace
     private:
       bool m_Pressed = false;
       vsg::vec2 m_PressPos = {0, 0};
+  };
+
+  // Calls onFrame before every frame, until removed from the viewer's handlers.
+  class FrameCallbackHandler : public vsg::Inherit<vsg::Visitor, FrameCallbackHandler>
+  {
+    public:
+      std::function<void()> onFrame;
+      void apply(vsg::FrameEvent&) override
+      {
+        if (onFrame) onFrame();
+      }
   };
 
   // Hiding the view (closing its window) makes Qt destroy the native window
@@ -172,6 +184,9 @@ Viewport3D::Viewport3D(QWidget* parent) : QWidget(parent)
   m_Traits->windowTitle = "shtetl";
   // Multisampled (a device that can't do this many gets the most it can).
   m_Traits->samples = VK_SAMPLE_COUNT_4_BIT;
+  // For the width of the edge lines.
+  m_Traits->deviceFeatures = vsg::DeviceFeatures::create();
+  m_Traits->deviceFeatures->get().wideLines = VK_TRUE;
 
   auto viewer = COnDemandViewer::create(8);
   // On-demand rendering: camera interaction calls request() itself.
@@ -238,6 +253,12 @@ Viewport3D::Viewport3D(QWidget* parent) : QWidget(parent)
 
 Viewport3D::~Viewport3D()
 {
+  if (m_EdgeThread)
+  {
+    m_EdgeCancel->store(true);
+    m_EdgeThread->wait();
+    delete m_EdgeThread;
+  }
   if (m_Viewer) m_Viewer->deviceWaitIdle();
 }
 
@@ -299,6 +320,8 @@ void Viewport3D::setModel(LoadedModel loaded)
   m_Model = loaded.node;
   m_ModelBounds = loaded.bounds;
   m_Compact = loaded.compact;
+  const auto oldEdges = m_Edges;
+  m_Edges = {};
   collectMaterials();
   updateCompactMaterial(false);
   try
@@ -315,6 +338,7 @@ void Viewport3D::setModel(LoadedModel loaded)
     m_Model = oldModel;
     m_ModelBounds = oldBounds;
     m_Compact = oldCompact;
+    m_Edges = oldEdges;
     collectMaterials();
     updateCompactMaterial(false);
     loaded = {};
@@ -338,6 +362,7 @@ void Viewport3D::setModel(LoadedModel loaded)
     }
   }
   fitAll(false);
+  resetEdges();
 }
 
 void Viewport3D::clearModel()
@@ -346,7 +371,9 @@ void Viewport3D::clearModel()
   m_ModelBounds = vsg::dbox();
   m_Compact = {};
   m_PbrMaterials.clear();
+  m_Edges = {};
   buildSceneGraph();
+  resetEdges();
 }
 
 void Viewport3D::rebuildSceneGraph()
@@ -384,7 +411,9 @@ void Viewport3D::buildSceneGraph()
   double radius = 1.0;
   if (m_Model)
   {
-    root->addChild(m_Model);
+    if (!wireframeActive()) root->addChild(m_Model);
+    if (m_EdgeMode != EdgeMode::Off && m_Compact && m_Edges)
+      root->addChild(makeEdgesNode(m_Edges, m_EdgeMode == EdgeMode::Sharp, m_Compact, m_EdgeStyle, false, wireframeActive()));
 
     if (m_ModelBounds.valid())
     {
@@ -405,11 +434,14 @@ void Viewport3D::buildSceneGraph()
   m_Projection->orthographic = m_Orthographic;
   m_Camera = vsg::Camera::create(m_Projection, lookAt, vsg::ViewportState::create(extent));
 
+  applyEdgeWidth();
+
   // Drop the previous trackball and gizmo - they hold the now-stale camera.
   auto& handlers = m_Viewer->getEventHandlers();
   if (m_Trackball) handlers.erase(std::remove(handlers.begin(), handlers.end(), m_Trackball), handlers.end());
   if (m_ContextClick) handlers.erase(std::remove(handlers.begin(), handlers.end(), m_ContextClick), handlers.end());
   if (m_OcclusionUpdater) handlers.erase(std::remove(handlers.begin(), handlers.end(), m_OcclusionUpdater), handlers.end());
+  if (m_EdgeFadeUpdater) handlers.erase(std::remove(handlers.begin(), handlers.end(), m_EdgeFadeUpdater), handlers.end());
   m_Occlusion = nullptr;
   m_OcclusionUpdater = nullptr;
   m_Gradient = nullptr;
@@ -447,6 +479,10 @@ void Viewport3D::buildSceneGraph()
   m_Viewer->addEventHandler(m_ContextClick);
   m_Viewer->addEventHandler(m_Trackball);
   m_Viewer->addEventHandler(m_Gizmo->GetIntersectionHandler());
+  auto edgeFade = FrameCallbackHandler::create();
+  edgeFade->onFrame = [this]() { updateEdgeFade(); };
+  m_EdgeFadeUpdater = edgeFade;
+  m_Viewer->addEventHandler(m_EdgeFadeUpdater);
 
   // The frames still in flight draw with the old scene graph and its buffers;
   // let them finish before those are released (a 1 GB model's buffers pile up
@@ -455,13 +491,15 @@ void Viewport3D::buildSceneGraph()
   m_Viewer->recordAndSubmitTasks.clear();
   m_Viewer->presentations.clear();
   auto view3D = vsg::Group::create();
-  if (m_AmbientOcclusion && m_Model && m_Compact)
+  // (The wireframe has no surface to darken, and is blended, which the G-buffer can't take.)
+  if (m_AmbientOcclusion && m_Model && m_Compact && !wireframeActive())
   {
     // The model is drawn into the G-buffer by offscreen passes, and the view
     // of the window is the composition that darkens it by the occlusion.
     auto device = m_Window->windowAdapter->getOrCreateDevice();
     auto gbufferScene = vsg::Group::create();
     gbufferScene->addChild(makeCompactGBufferNode(m_Compact));
+    if (m_EdgeMode != EdgeMode::Off && m_Edges) gbufferScene->addChild(makeEdgesNode(m_Edges, m_EdgeMode == EdgeMode::Sharp, m_Compact, m_EdgeStyle, true));
     const VkExtent2D occlusionExtent = m_PixelExtent.width > 0 ? m_PixelExtent : extent;
     m_Occlusion = AmbientOcclusion::create(device, m_Camera, gbufferScene, occlusionExtent, m_FitRadius * AmbientOcclusionRadius, srgbVec(m_Background),
                                      m_GradientBackground ? srgbVec(m_BackgroundBottom) : srgbVec(m_Background));
@@ -698,6 +736,128 @@ void Viewport3D::setModelColor(const vsg::vec4& diffuse)
   }
   m_Model = makeCompactNode(m_Compact);
   if (m_Camera && m_Window && m_Window->windowAdapter) rebuildSceneGraph();
+}
+
+double Viewport3D::maxEdgeWidth() const
+{
+  auto dev = device();
+  if (!dev) return 1.0;
+  auto physicalDevice = dev->getPhysicalDevice();
+  if (!physicalDevice->getFeatures().wideLines) return 1.0;
+  return std::max(1.0, static_cast<double>(physicalDevice->getProperties().limits.lineWidthRange[1]));
+}
+
+void Viewport3D::applyEdgeWidth()
+{
+  m_EdgeStyle.width->lineWidth = static_cast<float>(std::clamp(m_EdgeWidth, 1.0, maxEdgeWidth()));
+  if (m_Viewer) m_Viewer->request();
+}
+
+void Viewport3D::setEdgeWidth(double width)
+{
+  m_EdgeWidth = std::max(1.0, width);
+  applyEdgeWidth();
+}
+
+void Viewport3D::setEdgeColor(const QColor& color)
+{
+  if (!color.isValid()) return;
+  m_EdgeColor = color;
+  const vsg::vec3 rgb = srgbVec(color);
+  m_EdgeStyle.params->value().color = vsg::vec4(SrgbToLinear(rgb.r), SrgbToLinear(rgb.g), SrgbToLinear(rgb.b), 1.0f);
+  m_EdgeStyle.params->dirty();
+  if (m_Viewer) m_Viewer->request();
+}
+
+void Viewport3D::setEdgeMode(EdgeMode mode)
+{
+  if (mode == m_EdgeMode) return;
+  const bool hadEdges = m_EdgeMode != EdgeMode::Off && m_Edges;
+  const bool wasWireframe = wireframeActive();
+  m_EdgeMode = mode;
+  if (mode != EdgeMode::Off) startEdgeComputation();
+  // Another set of lines, or none: another scene graph. (Not while the edges are still being computed.)
+  const bool haveEdges = mode != EdgeMode::Off && m_Edges;
+  if ((hadEdges || haveEdges || wireframeActive() != wasWireframe) && m_Model && m_Camera && m_Window && m_Window->windowAdapter) rebuildSceneGraph();
+}
+
+void Viewport3D::updateEdgeFade()
+{
+  // The lines nearest the viewer are opaque, those at the far side of the
+  // model's bounding sphere keep this much of their alpha.
+  constexpr float FarAlpha = 0.3f;
+  vsg::vec4 fade(0.0f, 1.0f, 1.0f, 0.0f); // none
+  auto lookAt = m_Camera ? m_Camera->viewMatrix.cast<vsg::LookAt>() : nullptr;
+  if (wireframeActive() && lookAt)
+  {
+    const double distance = vsg::length(lookAt->eye - m_FitCenter);
+    fade = vsg::vec4(static_cast<float>(distance - m_FitRadius), static_cast<float>(distance + m_FitRadius), FarAlpha, 0.0f);
+  }
+  auto& current = m_EdgeStyle.params->value().fade;
+  if (current.x == fade.x && current.y == fade.y && current.z == fade.z) return;
+  current = fade;
+  m_EdgeStyle.params->dirty();
+}
+
+void Viewport3D::resetEdges()
+{
+  m_EdgesFailed = false;
+  ++m_EdgeGeneration;
+  if (m_EdgeThread) m_EdgeCancel->store(true); // its result will be stale; it starts the next one
+  startEdgeComputation();
+}
+
+void Viewport3D::startEdgeComputation()
+{
+  if (m_EdgeMode == EdgeMode::Off || !m_Compact || m_Edges || m_EdgeThread) return;
+  auto result = std::make_shared<EdgeSet>();
+  auto cancel = std::make_shared<std::atomic<bool>>(false);
+  m_EdgeCancel = cancel;
+  const int generation = m_EdgeGeneration;
+  // The thread holds the packed vertices (shared, and only read).
+  m_EdgeThread = QThread::create([source = m_Compact, result, cancel]() {
+    try
+    {
+      *result = computeEdges(source, cancel.get());
+    }
+    catch (const std::exception& e)
+    {
+      if (!cancel->load()) spdlog::warn("Computing the edges failed: {}", e.what());
+    }
+  });
+  connect(m_EdgeThread, &QThread::finished, m_EdgeThread, &QObject::deleteLater);
+  connect(m_EdgeThread, &QThread::finished, this, [this, result, generation]() {
+    m_EdgeThread = nullptr;
+    if (generation != m_EdgeGeneration)
+      startEdgeComputation(); // the model changed meanwhile
+    else if (*result)
+    {
+      m_Edges = *result;
+      if (m_EdgeMode != EdgeMode::Off && m_Model && m_Camera && m_Window && m_Window->windowAdapter)
+      {
+        try
+        {
+          rebuildSceneGraph();
+        }
+        catch (const vsg::Exception& e)
+        {
+          spdlog::error("Showing the edges failed: {} (VkResult {})", e.message, e.result);
+          m_Edges = {};
+          m_EdgesFailed = true;
+          rebuildSceneGraph();
+        }
+      }
+    }
+    else
+    {
+      // Failed (it was logged): the surface is shown after all.
+      m_EdgesFailed = true;
+      if (wireframeActive() == false && m_EdgeMode == EdgeMode::Wireframe && m_Model && m_Camera && m_Window && m_Window->windowAdapter) rebuildSceneGraph();
+    }
+    if (!m_EdgeThread) emit edgesBusy(false);
+  });
+  emit edgesBusy(true);
+  m_EdgeThread->start();
 }
 
 void Viewport3D::setOrthographic(bool orthographic)

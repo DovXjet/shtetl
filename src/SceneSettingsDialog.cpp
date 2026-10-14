@@ -14,6 +14,7 @@
 #include <QSlider>
 #include <QVBoxLayout>
 
+#include <algorithm>
 #include <cmath>
 #include <functional>
 #include <vector>
@@ -76,6 +77,8 @@ SceneSettingsDialog::SceneSettingsDialog(Viewport3D* viewport, QWidget* parent) 
   m_Viewport->setBackgroundBottom(storedColor(settings, "View/BackgroundBottomColor", Viewport3D::defaultBackgroundBottom()));
   m_Viewport->setGradientBackground(settings.value("View/GradientBackground", false).toBool());
   m_ModelColor = storedColor(settings, "View/ModelColor", DefaultModelColor);
+  m_Viewport->setEdgeColor(storedColor(settings, "View/EdgeColor", Viewport3D::defaultEdgeColor()));
+  m_Viewport->setEdgeWidth(settings.value("View/EdgeWidth", Viewport3D::defaultEdgeWidth()).toDouble());
   m_OverrideMaterial = settings.value("Material/Override", false).toBool();
   m_Metallic = std::clamp(settings.value("Material/Metallic", DefaultMetallic).toDouble(), 0.0, 1.0);
   m_Roughness = std::clamp(settings.value("Material/Roughness", DefaultRoughness).toDouble(), 0.0, 1.0);
@@ -100,6 +103,18 @@ SceneSettingsDialog::SceneSettingsDialog(Viewport3D* viewport, QWidget* parent) 
   auto* modelsForm = new QFormLayout(models);
   m_ModelButton = colorButton();
   modelsForm->addRow("Color:", m_ModelButton);
+
+  auto* edges = new QGroupBox("Edges (View > Edges)", this);
+  auto* edgesForm = new QFormLayout(edges);
+  m_EdgeColorButton = colorButton();
+  edgesForm->addRow("Color:", m_EdgeColorButton);
+  m_EdgeWidthSpin = new QDoubleSpinBox(this);
+  m_EdgeWidthSpin->setRange(1.0, std::max(1.0, m_Viewport->maxEdgeWidth()));
+  m_EdgeWidthSpin->setSingleStep(0.5);
+  m_EdgeWidthSpin->setDecimals(1);
+  m_EdgeWidthSpin->setSuffix(" px");
+  m_EdgeWidthSpin->setToolTip(m_Viewport->maxEdgeWidth() > 1.0 ? "The width of the lines" : "This graphics device draws lines one pixel wide only");
+  edgesForm->addRow("Line width:", m_EdgeWidthSpin);
 
   auto* materials = new QGroupBox("Material", this);
   auto* materialsForm = new QFormLayout(materials);
@@ -138,6 +153,7 @@ SceneSettingsDialog::SceneSettingsDialog(Viewport3D* viewport, QWidget* parent) 
   auto* layout = new QVBoxLayout(this);
   layout->addWidget(background);
   layout->addWidget(models);
+  layout->addWidget(edges);
   layout->addWidget(materials);
   layout->addLayout(buttons);
   setMinimumWidth(340);
@@ -161,6 +177,11 @@ SceneSettingsDialog::SceneSettingsDialog(Viewport3D* viewport, QWidget* parent) 
     pickColor("Model Color (STL and 3MF)", m_ModelColor, apply);
     updateWidgets();
   });
+  connect(m_EdgeColorButton, &QPushButton::clicked, this, [this]() {
+    pickColor("Edge Color", m_Viewport->edgeColor(), [this](const QColor& c) { m_Viewport->setEdgeColor(c); });
+    updateWidgets();
+  });
+  connect(m_EdgeWidthSpin, &QDoubleSpinBox::valueChanged, this, [this](double v) { m_Viewport->setEdgeWidth(v); });
   connect(m_Override, &QCheckBox::toggled, this, [this](bool on) {
     m_OverrideMaterial = on;
     applyMaterial();
@@ -243,6 +264,11 @@ void SceneSettingsDialog::updateWidgets()
   setSwatch(m_TopButton, m_Viewport->background());
   setSwatch(m_BottomButton, m_Viewport->backgroundBottom());
   setSwatch(m_ModelButton, m_ModelColor);
+  setSwatch(m_EdgeColorButton, m_Viewport->edgeColor());
+  {
+    const QSignalBlocker blockEdgeWidth(m_EdgeWidthSpin);
+    m_EdgeWidthSpin->setValue(m_Viewport->edgeWidth());
+  }
   m_Gradient->setChecked(m_Viewport->isGradientBackground());
   m_BottomButton->setEnabled(m_Viewport->isGradientBackground());
   m_Override->setChecked(m_OverrideMaterial);
@@ -267,6 +293,8 @@ void SceneSettingsDialog::resetToDefaults()
   m_Viewport->setGradientBackground(false);
   m_ModelColor = DefaultModelColor;
   emit modelColorChanged(m_ModelColor);
+  m_Viewport->setEdgeColor(Viewport3D::defaultEdgeColor());
+  m_Viewport->setEdgeWidth(Viewport3D::defaultEdgeWidth());
   const bool wasPbr = m_OverrideMaterial;
   m_OverrideMaterial = false;
   m_Metallic = DefaultMetallic;
@@ -294,6 +322,8 @@ void SceneSettingsDialog::save() const
   settings.setValue("View/BackgroundBottomColor", m_Viewport->backgroundBottom());
   settings.setValue("View/GradientBackground", m_Viewport->isGradientBackground());
   settings.setValue("View/ModelColor", m_ModelColor);
+  settings.setValue("View/EdgeColor", m_Viewport->edgeColor());
+  settings.setValue("View/EdgeWidth", m_Viewport->edgeWidth());
   settings.setValue("Material/Override", m_OverrideMaterial);
   settings.setValue("Material/Metallic", m_Metallic);
   settings.setValue("Material/Roughness", m_Roughness);

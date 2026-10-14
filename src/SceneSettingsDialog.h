@@ -16,7 +16,7 @@ class Viewport3D;
 vsg::vec4 linearColor(const QColor& color);
 
 // The settings of the 3D scene in one place: the background (solid or a
-// gradient), the color of STL and 3MF models, and the metallic / roughness
+// gradient), the color of STL and 3MF models, the color and width of the edges, and the metallic / roughness
 // that override the materials of glTF models. Not modal: every change shows in
 // the view at once. Restored from, and saved to, QSettings.
 class SceneSettingsDialog : public QDialog
@@ -55,6 +55,8 @@ class SceneSettingsDialog : public QDialog
     QPushButton* m_TopButton = nullptr;
     QPushButton* m_BottomButton = nullptr;
     QPushButton* m_ModelButton = nullptr;
+    QPushButton* m_EdgeColorButton = nullptr;
+    QDoubleSpinBox* m_EdgeWidthSpin = nullptr;
     QCheckBox* m_Gradient = nullptr;
     QCheckBox* m_Override = nullptr;
     QComboBox* m_Preset = nullptr;

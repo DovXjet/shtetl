@@ -3,6 +3,7 @@
 #include "AmbientOcclusion.h"
 #include "CompactMesh.h"
 #include "CubeGizmo.h"
+#include "EdgeMesh.h"
 #include "MyTrackball.h"
 #include "NavigationStyles.h"
 #include "OnDemandViewer.h"
@@ -17,8 +18,12 @@
 #include <QTimer>
 #include <QWidget>
 
+#include <atomic>
 #include <cmath>
+#include <memory>
 #include <vector>
+
+class QThread;
 
 // Perspective projection that can be switched to an orthographic one with the
 // same framing at the look-at center (from RobotMotion).
@@ -44,6 +49,15 @@ class CToggleProjection : public vsg::Inherit<vsg::ProjectionMatrix, CToggleProj
 
   private:
     vsg::ref_ptr<vsg::LookAt> m_LookAt;
+};
+
+// Which edges of a model are drawn over it.
+enum class EdgeMode
+{
+    Off,
+    All,   // every edge of the mesh
+    Sharp, // the boundary and the edges where the surface bends by more than 45 degrees
+    Wireframe, // every edge, and no surface; the lines fade with the distance
 };
 
 // The 3D view of one model, with the orientation cube in the corner.
@@ -100,6 +114,23 @@ class Viewport3D : public QWidget
     // to the ones shown later; off, the Phong shaders and the file's own values.
     void setMaterialOverride(bool enabled, float metallic, float roughness);
 
+    // Draws the edges of the STL and 3MF model over it (as XjetStudio's
+    // View > Edges), whatever shader shades it. They are computed in the
+    // background the first time they are asked for, for each model. The other
+    // formats are not drawn with edges.
+    void setEdgeMode(EdgeMode mode);
+    EdgeMode edgeMode() const { return m_EdgeMode; }
+    // The color (sRGB) and the width in pixels, changed live. The width is 1
+    // where the device has no wide lines.
+    void setEdgeColor(const QColor& color);
+    QColor edgeColor() const { return m_EdgeColor; }
+    static QColor defaultEdgeColor() { return QColor(0, 0, 0); }
+    void setEdgeWidth(double width);
+    double edgeWidth() const { return m_EdgeWidth; }
+    static double defaultEdgeWidth() { return 1.0; }
+    // The widest line the device draws.
+    double maxEdgeWidth() const;
+
     void toggleProjection() { setOrthographic(!m_Orthographic); }
     void setOrthographic(bool orthographic);
     bool isOrthographic() const { return m_Orthographic; }
@@ -110,6 +141,8 @@ class Viewport3D : public QWidget
 
   signals:
     void projectionChanged(bool orthographic);
+    // The edges of the model are being computed (true), or are done.
+    void edgesBusy(bool busy);
     // A plain right-click in the view (not a drag, not on the orientation cube).
     void contextMenuRequested(const QPoint& globalPos);
 
@@ -132,6 +165,16 @@ class Viewport3D : public QWidget
     float studioLightsScale() const { return m_OverrideMaterial && !m_PbrMaterials.empty() ? 0.0f : 1.0f; }
     // The STL/3MF model: its PBR material's values, and the shader that is in use.
     void updateCompactMaterial(bool rebuild);
+    // Forgets the edges of the previous model, and computes those of the new one if they are shown.
+    void resetEdges();
+    void startEdgeComputation();
+    void applyEdgeWidth();
+    // The wireframe is on for this model: the surface is left out, from the
+    // start, while its edges are still being computed (a blank view, rather
+    // than the solid model that is replaced a moment later).
+    bool wireframeActive() const { return m_EdgeMode == EdgeMode::Wireframe && m_Compact && !m_EdgesFailed; }
+    // Per frame: the depth range of the wireframe's fade follows the camera.
+    void updateEdgeFade();
     void addKeyViewpoints(const vsg::dvec3& center, double distance);
 
     vsg::ref_ptr<vsg::WindowTraits> m_Traits;
@@ -144,6 +187,7 @@ class Viewport3D : public QWidget
     vsg::ref_ptr<MyTrackball> m_Trackball;
     vsg::ref_ptr<CCubeGizmo> m_Gizmo;
     vsg::ref_ptr<vsg::Visitor> m_ContextClick;
+    vsg::ref_ptr<vsg::Visitor> m_EdgeFadeUpdater;
     vsg::ref_ptr<vsg::RenderGraph> m_RenderGraph;
     vsg::ref_ptr<vsg::Node> m_Model;
     vsg::ref_ptr<vsg::Node> m_StudioLights; // the lights of the scene graph
@@ -169,6 +213,15 @@ class Viewport3D : public QWidget
     // images are made at that size, and made anew (after a pause) when it changes.
     VkExtent2D m_PixelExtent{0, 0};
     QTimer m_OcclusionResizeTimer;
+    EdgeMode m_EdgeMode = EdgeMode::Off;
+    QColor m_EdgeColor = defaultEdgeColor();
+    double m_EdgeWidth = defaultEdgeWidth();
+    EdgeStyle m_EdgeStyle;
+    EdgeSet m_Edges; // of the model, once computed
+    bool m_EdgesFailed = false; // computing them failed: the wireframe falls back to the surface
+    QThread* m_EdgeThread = nullptr; // computing them
+    std::shared_ptr<std::atomic<bool>> m_EdgeCancel;
+    int m_EdgeGeneration = 0; // counts the models, so that a late result is known to be stale
     vsg::dvec3 m_FitCenter{0.0, 0.0, 0.0};
     double m_FitRadius = 1.0;
     bool m_Orthographic = false;

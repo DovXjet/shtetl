@@ -64,6 +64,7 @@ add_executable(shtetl
   src/CubeGizmo.cpp
   src/ModelFormats.cpp
   src/CompactMesh.cpp
+  src/EdgeMesh.cpp
   src/AmbientOcclusion.cpp
   src/Mesh3mf.cpp
   src/ThumbnailRenderer.cpp
@@ -94,7 +95,8 @@ set(SHTETL_SHADER_FILES
             resources/shaders/compact_mesh.vert resources/shaders/compact_mesh.frag
             resources/shaders/compact_mesh_gbuffer.frag resources/shaders/ao_fullscreen.vert resources/shaders/ao_ssao.frag resources/shaders/ao_blur.frag
             resources/shaders/ao_composite.frag resources/shaders/ao_fxaa.frag resources/shaders/gradient_background.frag
-            resources/shaders/pbr_environment.glsl resources/shaders/compact_pbr_common.glsl resources/shaders/compact_pbr.frag resources/shaders/compact_pbr_gbuffer.frag)
+            resources/shaders/pbr_environment.glsl resources/shaders/compact_pbr_common.glsl resources/shaders/compact_pbr.frag resources/shaders/compact_pbr_gbuffer.frag
+            resources/shaders/edge_lines.vert resources/shaders/edge_lines.frag resources/shaders/edge_lines_gbuffer.frag)
 qt_add_resources(shtetl shaders PREFIX / BASE resources FILES ${SHTETL_SHADER_FILES})
 # The application logo (window icon; the .ico is embedded by resources/shtetl.rc).
 qt_add_resources(shtetl icons PREFIX / BASE resources FILES resources/icons/shtetl.png resources/icons/shtetl-about.png)

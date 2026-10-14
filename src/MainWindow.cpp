@@ -36,6 +36,7 @@
 
 #include <cmath>
 #include <utility>
+#include <vector>
 
 namespace
 {
@@ -251,7 +252,7 @@ void MainWindow::createMenus()
   });
   sceneSettings->setShortcut(QKeySequence("F8"));
   addAction(sceneSettings); // so that the shortcut works while the menu bar is hidden
-  sceneSettings->setStatusTip("Background, model color and material properties");
+  sceneSettings->setStatusTip("Background, model color, edges and material properties");
   // The same switch as in the settings window.
   auto* usePbr = viewMenu->addAction("Use &PBR Shader");
   usePbr->setCheckable(true);
@@ -268,6 +269,81 @@ void MainWindow::createMenus()
   connect(usePbr, &QAction::toggled, pbrLabel, &QLabel::setVisible);
   connect(usePbr, &QAction::toggled, m_SceneSettings, &SceneSettingsDialog::setUsePbr);
   connect(m_SceneSettings, &SceneSettingsDialog::usePbrChanged, usePbr, &QAction::setChecked);
+
+  // The edges of STL and 3MF models drawn over them; their color and width are
+  // in Scene Settings. One of three, remembered between runs.
+  auto* edgesMenu = viewMenu->addMenu("&Edges");
+  edgesMenu->setStatusTip("Draw the edges of STL and 3MF models over them");
+  auto* edgesGroup = new QActionGroup(edgesMenu);
+  const QString storedEdges = settings.value("View/Edges", "off").toString();
+  struct EdgeChoice
+  {
+      const char* name;
+      const char* key;
+      EdgeMode mode;
+      const char* tip;
+  };
+  const EdgeChoice edgeChoices[] = {
+      {"&Off", "off", EdgeMode::Off, "No edges"},
+      {"&All", "all", EdgeMode::All, "Every edge of the mesh"},
+      {"&Sharp", "sharp", EdgeMode::Sharp, "The boundary, and the edges where the surface bends by more than 45 degrees"},
+      {"&Wireframe", "wireframe", EdgeMode::Wireframe, "Only the edges of the mesh, fading with the distance"},
+  };
+  EdgeMode initialEdges = EdgeMode::Off;
+  // A permanent indicator in the status bar while edges are shown.
+  auto* edgesLabel = new QLabel("E", this);
+  statusBar()->addPermanentWidget(edgesLabel);
+  auto showEdgesLabel = [edgesLabel](EdgeMode mode) {
+    edgesLabel->setVisible(mode != EdgeMode::Off);
+    edgesLabel->setText(mode == EdgeMode::Wireframe ? "W" : "E");
+    edgesLabel->setToolTip(mode == EdgeMode::All ? "Edges: all" : mode == EdgeMode::Wireframe ? "Wireframe" : "Edges: sharp");
+  };
+  std::vector<std::pair<EdgeMode, QAction*>> edgeActions;
+  for (const EdgeChoice& choice : edgeChoices)
+  {
+    auto* action = edgesMenu->addAction(choice.name);
+    action->setCheckable(true);
+    action->setStatusTip(choice.tip);
+    edgesGroup->addAction(action);
+    edgeActions.emplace_back(choice.mode, action);
+    const bool initial = storedEdges == choice.key;
+    action->setChecked(initial);
+    if (initial) initialEdges = choice.mode;
+    connect(action, &QAction::triggered, this, [this, choice, showEdgesLabel]() {
+      m_Viewport->setEdgeMode(choice.mode);
+      showEdgesLabel(choice.mode);
+      QSettings().setValue("View/Edges", choice.key);
+      QString name = QString(choice.name).remove('&');
+      statusBar()->showMessage("Edges: " + name.toLower(), 3000);
+    });
+  }
+  if (initialEdges == EdgeMode::Off) edgeActions.front().second->setChecked(true);
+  m_Viewport->setEdgeMode(initialEdges);
+  showEdgesLabel(initialEdges);
+  // E and Shift+E switch the sharp / all edges on, and either turns whatever is
+  // on off (the wireframe included); W switches the wireframe on and off.
+  edgesMenu->addSeparator();
+  auto addEdgeToggle = [this, edgesMenu, edgeActions](const QString& text, const QString& key, EdgeMode on, bool anyEdgesOff) {
+    auto* toggle = edgesMenu->addAction(text);
+    toggle->setShortcut(QKeySequence(key));
+    addAction(toggle); // so that the shortcut works while the menu bar is hidden
+    connect(toggle, &QAction::triggered, this, [this, edgeActions, on, anyEdgesOff]() {
+      const EdgeMode current = m_Viewport->edgeMode();
+      const bool off = anyEdgesOff ? current != EdgeMode::Off : current == on;
+      const EdgeMode target = off ? EdgeMode::Off : on;
+      for (const auto& [mode, action] : edgeActions)
+        if (mode == target) action->trigger();
+    });
+  };
+  addEdgeToggle("Toggle Sharp Edges", "E", EdgeMode::Sharp, true);
+  addEdgeToggle("Toggle All Edges", "Shift+E", EdgeMode::All, true);
+  addEdgeToggle("Toggle Wireframe", "W", EdgeMode::Wireframe, false);
+  connect(m_Viewport, &Viewport3D::edgesBusy, this, [this](bool busy) {
+    if (busy)
+      statusBar()->showMessage("Computing edges...");
+    else
+      statusBar()->clearMessage();
+  });
   viewMenu->addSeparator();
   auto* fit = viewMenu->addAction("Fit to Window", m_Viewport, [this]() { m_Viewport->fitAll(); });
   fit->setShortcuts({QKeySequence("Ctrl+0"), QKeySequence("F")});
