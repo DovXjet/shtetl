@@ -93,16 +93,41 @@ namespace
       void apply(vsg::StateGroup& stateGroup) override
       {
         // The pipeline that is bound along with a PBR material is the PBR one.
-        if (!materialsBoundBy(stateGroup).empty())
+        const auto materials = materialsBoundBy(stateGroup);
+        if (!materials.empty())
           for (auto& command : stateGroup.stateCommands)
             if (auto bind = command.cast<vsg::BindGraphicsPipeline>())
-              if (bind->pipeline) patch(bind->pipeline->stages);
+              if (bind->pipeline)
+              {
+                patch(bind->pipeline->stages);
+                relaxDefaultMetal(bind->pipeline->stages, materials);
+              }
         stateGroup.traverse(*this);
       }
 
       int patched = 0;
 
     private:
+      // glTF's defaults are metallic 1 and roughness 1, which many exporters
+      // (the AI model generators among them) write out as they are, for a
+      // material that is just a textured surface. Lit by anything but a real
+      // environment a rough metal is nearly black, so, when nothing else gives
+      // the metal or the roughness (no metallic-roughness texture, and not the
+      // specular-glossiness workflow), such a material is made a plain dielectric.
+      void relaxDefaultMetal(const vsg::ShaderStages& stages, const std::vector<vsg::ref_ptr<vsg::PbrMaterialValue>>& materials)
+      {
+        for (auto& stage : stages)
+          if (stage && stage->module && stage->module->hints)
+            for (auto& define : stage->module->hints->defines)
+              if (define == "VSG_METALLROUGHNESS_MAP" || define == "VSG_WORKFLOW_SPECGLOSS") return;
+        for (auto& material : materials)
+          if (material->value().metallicFactor == 1.0f && material->value().roughnessFactor == 1.0f)
+          {
+            material->value().metallicFactor = 0.0f;
+            material->value().roughnessFactor = 0.5f;
+          }
+      }
+
       // The stages of a PBR pipeline: the fragment shader is extended; the
       // others are given their source too if they have only compiled code,
       // as the shaders of a pipeline are compiled together.
@@ -121,8 +146,10 @@ namespace
         const size_t emissiveAt = source.find(emissiveAnchor);
         // Not the shader expected, or done already.
         if (mainAt == std::string::npos || emissiveAt == std::string::npos || emissiveAt < mainAt || source.find("environmentLighting") != std::string::npos) return;
-        // The call goes in first, being later in the text.
-        source.insert(emissiveAt, "if (pbr.specularFactor.a > 1.5) color += environmentLighting(n, v, baseColor.rgb, metallic, perceptualRoughness, ambientOcclusion);\n    ");
+        // The call goes in first, being later in the text. The diffuse part is
+        // raised a little (the 1.6): the textures of glTF models are albedo, and
+        // look dull under the environment next to the studio lights otherwise.
+        source.insert(emissiveAt, "if (pbr.specularFactor.a > 1.5) color += environmentLighting(n, v, baseColor.rgb, metallic, perceptualRoughness, ambientOcclusion * 1.6);\n    ");
         source.insert(mainAt, expandShaderIncludes("#pragma include pbr_environment\n") + "\n");
         // A new module compiles from the source, with the defines of the old one.
         fragment->module = vsg::ShaderModule::create(source, fragment->module->hints);
