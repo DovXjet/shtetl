@@ -36,6 +36,11 @@ class AmbientOcclusion : public vsg::Inherit<vsg::Object, AmbientOcclusion>
     // vertical gradient, solid when they are the same.
     void setBackground(const vsg::vec3& top, const vsg::vec3& bottom);
 
+    // Where there is no geometry, transparent black instead of the background
+    // colors: for rendering to an image (the thumbnails). The target holds the
+    // colors premultiplied by their alpha.
+    void setTransparentBackground(bool transparent);
+
     // The weight of the darkening: 0 is none, 1 is all of it.
     void setStrength(float strength);
     // Copies the camera's projection into the passes. Called every frame, as
@@ -53,7 +58,8 @@ class AmbientOcclusion : public vsg::Inherit<vsg::Object, AmbientOcclusion>
     struct CompositionParams
     {
         float strength = 0.5f;
-        float pad0 = 0.0f, pad1 = 0.0f, pad2 = 0.0f;
+        float transparentBackground = 0.0f;
+        float pad1 = 0.0f, pad2 = 0.0f;
         vsg::vec4 background;
         vsg::vec4 backgroundBottom;
     };

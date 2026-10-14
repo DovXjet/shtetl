@@ -276,6 +276,12 @@ void AmbientOcclusion::setStrength(float strength)
   m_CompositionParams->dirty();
 }
 
+void AmbientOcclusion::setTransparentBackground(bool transparent)
+{
+  m_CompositionParams->value().transparentBackground = transparent ? 1.0f : 0.0f;
+  m_CompositionParams->dirty();
+}
+
 void AmbientOcclusion::updateProjection()
 {
   m_SsaoParams->value().projection = vsg::mat4(m_Camera->projectionMatrix->transform());

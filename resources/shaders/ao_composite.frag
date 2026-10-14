@@ -9,7 +9,7 @@ layout(binding = 2) uniform sampler2D samplerAO;
 layout(binding = 3) uniform UBO
 {
     float strength; // 0: no darkening, 1: full
-    float pad0;
+    float transparentBackground; // 1: no geometry is transparent black, not the background colors
     float pad1;
     float pad2;
     vec4 background;       // where there is no geometry: the top (sRGB)...
@@ -28,6 +28,11 @@ void main()
 {
     if (texture(samplerPosition, inUV).a >= 0.0)
     {
+        if (ubo.transparentBackground > 0.5)
+        {
+            outFragColor = vec4(0.0);
+            return;
+        }
         outFragColor = vec4(srgbToLinear(mix(ubo.background.rgb, ubo.backgroundBottom.rgb, clamp(inUV.y, 0.0, 1.0))), 1.0);
         return;
     }

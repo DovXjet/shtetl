@@ -1,5 +1,7 @@
 #pragma once
 
+#include "CompactMesh.h"
+
 #include <vsg/all.h>
 
 #include <QImage>
@@ -19,7 +21,10 @@ class ThumbnailRenderer
     // 3/4 viewpoint, or null. The image is sRGB encoded, as the viewer's is.
     // With `environmentLit` the scene's materials take their light from the
     // environment (see lightWithEnvironment()), and the studio lights are off.
-    vsg::ref_ptr<vsg::Data> render(vsg::ref_ptr<vsg::Node> scene, const vsg::dbox& bounds, bool environmentLit = false);
+    // With `compact` (an STL or 3MF) the creases are darkened by ambient
+    // occlusion, as in the viewer; the image is then rendered at twice the size
+    // (antialiased by FXAA, not multisampling), for thumbnailImage() to reduce.
+    vsg::ref_ptr<vsg::Data> render(vsg::ref_ptr<vsg::Node> scene, const vsg::dbox& bounds, bool environmentLit = false, const CompactSource* compact = nullptr);
 
   private:
     vsg::ref_ptr<vsg::Device> m_Device;
@@ -33,4 +38,5 @@ class ThumbnailRenderer
 // against transparent black, so the colors of their partly covered pixels are
 // the coverage times the model's, in linear light; this puts back the model's
 // colors there, as a straight-alpha image has them (no dark or colored halo).
-QImage thumbnailImage(const vsg::Data& data);
+// With a `size` the image is scaled down to it, if it is larger.
+QImage thumbnailImage(const vsg::Data& data, const QSize& size = {});

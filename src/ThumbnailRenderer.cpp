@@ -1,5 +1,6 @@
 #include "ThumbnailRenderer.h"
 
+#include "AmbientOcclusion.h"
 #include "StudioLights.h"
 
 #include <vsg/all.h>
@@ -229,10 +230,39 @@ void ThumbnailRenderer::setDevice(vsg::ref_ptr<vsg::Device> device)
   m_QueueFamily = queueFamily;
 }
 
-QImage thumbnailImage(const vsg::Data& data)
+QImage thumbnailImage(const vsg::Data& data, const QSize& size)
 {
     QImage view(static_cast<const uchar*>(data.dataPointer()), int(data.width()), int(data.height()), QImage::Format_RGBA8888);
     QImage image = view.copy();
+    if (size.isValid() && image.width() > size.width() && image.width() % size.width() == 0 && image.height() % size.height() == 0 &&
+        image.width() / size.width() == image.height() / size.height())
+    {
+        // A box filter, in linear light: the colors are premultiplied by the
+        // coverage, and averaging their sRGB codes would darken the silhouette.
+        const int factor = image.width() / size.width();
+        auto toLinear = [](float c) { return c <= 0.04045f ? c / 12.92f : std::pow((c + 0.055f) / 1.055f, 2.4f); };
+        auto toCode = [](float c) { return c <= 0.0031308f ? c * 12.92f : 1.055f * std::pow(c, 1.0f / 2.4f) - 0.055f; };
+        QImage reduced(size, QImage::Format_RGBA8888);
+        for (int y = 0; y < size.height(); ++y)
+            for (int x = 0; x < size.width(); ++x)
+            {
+                float sum[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+                for (int dy = 0; dy < factor; ++dy)
+                {
+                    const uchar* row = image.constScanLine(y * factor + dy) + 4 * x * factor;
+                    for (int dx = 0; dx < factor; ++dx)
+                    {
+                        for (int k = 0; k < 3; ++k) sum[k] += toLinear(row[4 * dx + k] / 255.0f);
+                        sum[3] += row[4 * dx + 3] / 255.0f; // the alpha is linear
+                    }
+                }
+                uchar* pixel = reduced.scanLine(y) + 4 * x;
+                const float n = float(factor * factor);
+                for (int k = 0; k < 3; ++k) pixel[k] = static_cast<uchar>(std::lround(toCode(sum[k] / n) * 255.0f));
+                pixel[3] = static_cast<uchar>(std::lround(sum[3] / n * 255.0f));
+            }
+        image = reduced;
+    }
 
     auto decode = [](float c) { return c <= 0.04045f ? c / 12.92f : std::pow((c + 0.055f) / 1.055f, 2.4f); };
     auto encode = [](float c) { return c <= 0.0031308f ? c * 12.92f : 1.055f * std::pow(c, 1.0f / 2.4f) - 0.055f; };
@@ -255,8 +285,10 @@ QImage thumbnailImage(const vsg::Data& data)
     return image;
 }
 
-vsg::ref_ptr<vsg::Data> ThumbnailRenderer::render(vsg::ref_ptr<vsg::Node> Scene, const vsg::dbox& bounds, bool environmentLit)
+vsg::ref_ptr<vsg::Data> ThumbnailRenderer::render(vsg::ref_ptr<vsg::Node> Scene, const vsg::dbox& bounds, bool environmentLit, const CompactSource* compact)
 {
+    const bool occluded = compact && *compact;
+    const VkExtent2D extent{m_Extent.width * (occluded ? 2u : 1u), m_Extent.height * (occluded ? 2u : 1u)};
     // compute the bounds of the scene graph to help position camera
     if (!bounds.valid()) return {};
     const vsg::dbox& b = bounds;
@@ -282,40 +314,67 @@ vsg::ref_ptr<vsg::Data> ThumbnailRenderer::render(vsg::ref_ptr<vsg::Node> Scene,
 
     vsg::ref_ptr<vsg::ProjectionMatrix> perspective = vsg::Perspective::create(
         fovDegrees,
-        1.0 * m_Extent.width / m_Extent.height,
+        1.0 * extent.width / extent.height,
         nearFarRatio * radius, distance + sphereRadius * 1.5);
 
-    auto camera = vsg::Camera::create(perspective, lookAt, vsg::ViewportState::create(m_Extent));
+    auto camera = vsg::Camera::create(perspective, lookAt, vsg::ViewportState::create(extent));
 
     // set up the RenderGraph to manage the rendering
-    auto colorImageView = createColorImageView(m_Device, m_Extent, imageFormat, VK_SAMPLE_COUNT_1_BIT);
-    auto depthImageView = createDepthImageView(m_Device, m_Extent, depthFormat, VK_SAMPLE_COUNT_1_BIT);
-    auto msaa_colorImageView = createColorImageView(m_Device, m_Extent, imageFormat, m_Samples);
-    auto msaa_depthImageView = createDepthImageView(m_Device, m_Extent, depthFormat, m_Samples);
-
-    auto renderPass = vsg::createMultisampledRenderPass(m_Device, imageFormat, depthFormat, m_Samples, true);
-    auto framebuffer = vsg::Framebuffer::create(renderPass, vsg::ImageViews{msaa_colorImageView, colorImageView, msaa_depthImageView, depthImageView}, m_Extent.width, m_Extent.height, 1);
+    // With occlusion the passes of AmbientOcclusion draw the model, one sample
+    // per pixel; the render graph then only draws their composition.
+    const VkSampleCountFlagBits samples = occluded ? VK_SAMPLE_COUNT_1_BIT : m_Samples;
+    auto colorImageView = createColorImageView(m_Device, extent, imageFormat, VK_SAMPLE_COUNT_1_BIT);
+    auto depthImageView = createDepthImageView(m_Device, extent, depthFormat, VK_SAMPLE_COUNT_1_BIT);
+    auto renderPass = vsg::createMultisampledRenderPass(m_Device, imageFormat, depthFormat, samples, true);
+    vsg::ref_ptr<vsg::Framebuffer> framebuffer;
+    if (samples == VK_SAMPLE_COUNT_1_BIT)
+    {
+        framebuffer = vsg::Framebuffer::create(renderPass, vsg::ImageViews{colorImageView, depthImageView}, extent.width, extent.height, 1);
+    }
+    else
+    {
+        auto msaa_colorImageView = createColorImageView(m_Device, extent, imageFormat, samples);
+        auto msaa_depthImageView = createDepthImageView(m_Device, extent, depthFormat, samples);
+        framebuffer = vsg::Framebuffer::create(renderPass, vsg::ImageViews{msaa_colorImageView, colorImageView, msaa_depthImageView, depthImageView}, extent.width, extent.height, 1);
+    }
 
     // create support for copying the color buffer
-    auto [colorBufferCapture, copiedColorBuffer] = createColorCapture(m_Device, m_Extent, colorImageView->image, imageFormat);
+    auto [colorBufferCapture, copiedColorBuffer] = createColorCapture(m_Device, extent, colorImageView->image, imageFormat);
 
     auto renderGraph = vsg::RenderGraph::create();
 
     renderGraph->framebuffer = framebuffer;
     renderGraph->renderArea.offset = {0, 0};
-    renderGraph->renderArea.extent = m_Extent;
+    renderGraph->renderArea.extent = extent;
     renderGraph->setClearValues({{0.0f, 0.0f, 0.0f, 0.0f}}, VkClearDepthStencilValue{0.0f, 0});
 
-    auto view = vsg::View::create(camera);
-    auto studioLights = createStudioLights();
-    if (environmentLit) scaleStudioLights(studioLights, 0.0f);
-    view->addChild(studioLights);
-    view->addChild(Scene);
-
-    renderGraph->addChild(view);
+    vsg::ref_ptr<AmbientOcclusion> occlusion;
+    if (occluded)
+    {
+        // As the viewer does it (Viewport3D::createScene); the radius is a
+        // fraction of the bounding sphere's, as there. The shading of the
+        // G-buffer's lit color is that of the compact mesh shader.
+        auto gbufferScene = vsg::Group::create();
+        gbufferScene->addChild(makeCompactGBufferNode(*compact));
+        occlusion = AmbientOcclusion::create(m_Device, camera, gbufferScene, extent, sphereRadius * 0.12, vsg::vec3(0.0f, 0.0f, 0.0f), vsg::vec3(0.0f, 0.0f, 0.0f));
+        occlusion->setStrength(0.85f);
+        occlusion->setTransparentBackground(true);
+        renderGraph->addChild(occlusion->compositionView());
+    }
+    else
+    {
+        auto view = vsg::View::create(camera);
+        auto studioLights = createStudioLights();
+        if (environmentLit) scaleStudioLights(studioLights, 0.0f);
+        view->addChild(studioLights);
+        view->addChild(Scene);
+        renderGraph->addChild(view);
+    }
 
     vsg::CommandGraphs commandGraphs;
     auto commandGraph = vsg::CommandGraph::create(m_Device, m_QueueFamily);
+    if (occlusion)
+        for (auto& graph : occlusion->renderGraphs()) commandGraph->addChild(graph);
     commandGraph->addChild(renderGraph);
     commandGraphs.push_back(commandGraph);
     if (colorBufferCapture)
@@ -353,21 +412,21 @@ vsg::ref_ptr<vsg::Data> ThumbnailRenderer::render(vsg::ref_ptr<vsg::Node> Scene,
 
             auto deviceMemory = copiedColorBuffer->getDeviceMemory(m_Device->deviceID);
 
-            size_t destRowWidth = m_Extent.width * sizeof(vsg::ubvec4);
+            size_t destRowWidth = extent.width * sizeof(vsg::ubvec4);
             if (destRowWidth == subResourceLayout.rowPitch)
             {
                 // Map the buffer memory and assign as a vec4Array2D that will automatically unmap itself on destruction.
-                imageData = vsg::MappedData<vsg::ubvec4Array2D>::create(deviceMemory, subResourceLayout.offset, 0, vsg::Data::Properties{imageFormat}, m_Extent.width, m_Extent.height);
+                imageData = vsg::MappedData<vsg::ubvec4Array2D>::create(deviceMemory, subResourceLayout.offset, 0, vsg::Data::Properties{imageFormat}, extent.width, extent.height);
             }
             else
             {
                 // Map the buffer memory and assign as a ubyteArray that will automatically unmap itself on destruction.
                 // A ubyteArray is used as the graphics buffer memory is not contiguous like vsg::Array2D, so map to a flat buffer first then copy to Array2D.
-                auto mappedData = vsg::MappedData<vsg::ubyteArray>::create(deviceMemory, subResourceLayout.offset, 0, vsg::Data::Properties{imageFormat}, subResourceLayout.rowPitch * m_Extent.height);
-                imageData = vsg::ubvec4Array2D::create(m_Extent.width, m_Extent.height, vsg::Data::Properties{imageFormat});
-                for (uint32_t row = 0; row < m_Extent.height; ++row)
+                auto mappedData = vsg::MappedData<vsg::ubyteArray>::create(deviceMemory, subResourceLayout.offset, 0, vsg::Data::Properties{imageFormat}, subResourceLayout.rowPitch * extent.height);
+                imageData = vsg::ubvec4Array2D::create(extent.width, extent.height, vsg::Data::Properties{imageFormat});
+                for (uint32_t row = 0; row < extent.height; ++row)
                 {
-                    std::memcpy(imageData->dataPointer(row * m_Extent.width), mappedData->dataPointer(row * subResourceLayout.rowPitch), destRowWidth);
+                    std::memcpy(imageData->dataPointer(row * extent.width), mappedData->dataPointer(row * subResourceLayout.rowPitch), destRowWidth);
                 }
             }
         }

@@ -92,10 +92,10 @@ void ThumbnailWorker::makeThumbnail(const QString& path, CancelFlag cancel, bool
         // The PBR materials (glTF) are lit by the environment, as in the viewer
         // with the PBR shader: a metallic one has nothing else to show.
         const bool environmentLit = lightWithEnvironment(*model.node);
-        if (auto data = m_Renderer.render(model.node, model.bounds, environmentLit))
+        if (auto data = m_Renderer.render(model.node, model.bounds, environmentLit, &model.compact))
         {
           // The renderer's RGBA8 rows, copied: the data is mapped GPU memory.
-          image = thumbnailImage(*data);
+          image = thumbnailImage(*data, QSize(ThumbnailSize, ThumbnailSize));
           image.save(cachePath, "PNG");
         }
       }

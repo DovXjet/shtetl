@@ -28,6 +28,22 @@ const float FXAA_REDUCE_MIN         = 1.0 / 128.0;
 const float FXAA_THRESHOLD_ABSOLUTE = 0.0312;
 const float FXAA_THRESHOLD_RELATIVE = 0.125;
 
+// The taps are premultiplied by their alpha, so that a transparent background
+// (the thumbnails') doesn't darken the silhouette, and the result is
+// premultiplied: the alpha is 1 everywhere in the window, where this is the same.
+// A neighbour, `offset` pixels away (textureOffset wants a constant).
+vec4 fetch(vec2 uv, vec2 offset)
+{
+    vec4 c = texture(samplerColor, uv + offset / vec2(textureSize(samplerColor, 0)));
+    return vec4(c.rgb * c.a, c.a);
+}
+
+vec4 fetch(vec2 uv)
+{
+    vec4 c = texture(samplerColor, uv);
+    return vec4(c.rgb * c.a, c.a);
+}
+
 float luma(vec3 rgb)
 {
     return dot(rgb, vec3(0.299, 0.587, 0.114));
@@ -37,17 +53,17 @@ void main()
 {
     vec2 rcpFrame = 1.0 / vec2(textureSize(samplerColor, 0));
 
-    vec3 rgbC  = texture(samplerColor, inUV).rgb;
-    vec3 rgbNW = textureOffset(samplerColor, inUV, ivec2(-1, -1)).rgb;
-    vec3 rgbNE = textureOffset(samplerColor, inUV, ivec2( 1, -1)).rgb;
-    vec3 rgbSW = textureOffset(samplerColor, inUV, ivec2(-1,  1)).rgb;
-    vec3 rgbSE = textureOffset(samplerColor, inUV, ivec2( 1,  1)).rgb;
+    vec4 rgbC  = fetch(inUV);
+    vec4 rgbNW = fetch(inUV, vec2(-1, -1));
+    vec4 rgbNE = fetch(inUV, vec2( 1, -1));
+    vec4 rgbSW = fetch(inUV, vec2(-1,  1));
+    vec4 rgbSE = fetch(inUV, vec2( 1,  1));
 
-    float lC  = luma(rgbC);
-    float lNW = luma(rgbNW);
-    float lNE = luma(rgbNE);
-    float lSW = luma(rgbSW);
-    float lSE = luma(rgbSE);
+    float lC  = luma(rgbC.rgb);
+    float lNW = luma(rgbNW.rgb);
+    float lNE = luma(rgbNE.rgb);
+    float lSW = luma(rgbSW.rgb);
+    float lSE = luma(rgbSE.rgb);
 
     float lMin = min(lC, min(min(lNW, lNE), min(lSW, lSE)));
     float lMax = max(lC, max(max(lNW, lNE), max(lSW, lSE)));
@@ -55,7 +71,7 @@ void main()
 
     if (range < max(FXAA_THRESHOLD_ABSOLUTE, lMax * FXAA_THRESHOLD_RELATIVE))
     {
-        outFragColor = vec4(rgbC, 1.0);
+        outFragColor = rgbC;
         return;
     }
 
@@ -71,17 +87,17 @@ void main()
                 vec2(-FXAA_SPAN_MAX),
                 vec2( FXAA_SPAN_MAX)) * rcpFrame;
 
-    vec3 rgbA = 0.5 * (
-        texture(samplerColor, inUV + dir * (1.0 / 3.0 - 0.5)).rgb +
-        texture(samplerColor, inUV + dir * (2.0 / 3.0 - 0.5)).rgb);
+    vec4 rgbA = 0.5 * (
+        fetch(inUV + dir * (1.0 / 3.0 - 0.5)) +
+        fetch(inUV + dir * (2.0 / 3.0 - 0.5)));
 
-    vec3 rgbB = rgbA * 0.5 + 0.25 * (
-        texture(samplerColor, inUV + dir * -0.5).rgb +
-        texture(samplerColor, inUV + dir *  0.5).rgb);
+    vec4 rgbB = rgbA * 0.5 + 0.25 * (
+        fetch(inUV + dir * -0.5) +
+        fetch(inUV + dir *  0.5));
 
-    float lB = luma(rgbB);
+    float lB = luma(rgbB.rgb);
     if (lB < lMin || lB > lMax)
-        outFragColor = vec4(rgbA, 1.0);
+        outFragColor = rgbA;
     else
-        outFragColor = vec4(rgbB, 1.0);
+        outFragColor = rgbB;
 }
