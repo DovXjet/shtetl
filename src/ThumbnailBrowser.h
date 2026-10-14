@@ -74,8 +74,8 @@ class ThumbnailBrowser : public QWidget
     QLineEdit* m_PathEdit = nullptr;
     QSlider* m_SizeSlider = nullptr;
     QListView* m_View = nullptr;
-    QPropertyAnimation* m_ScrollAnim = nullptr;
-    int m_ScrollTarget = 0;
+    QTimer* m_ScrollTimer = nullptr;   // drives the spring below
+    double m_ScrollPos = 0, m_ScrollVel = 0, m_ScrollTarget = 0;
     QStandardItemModel* m_Model = nullptr;
     QHash<QString, QStandardItem*> m_Items; // by file path
 };

@@ -13,7 +13,8 @@
 #include <QMimeData>
 #include <QPainter>
 #include <QPainterPath>
-#include <QPropertyAnimation>
+#include <QTimer>
+#include <cmath>
 #include <QScrollBar>
 #include <QWheelEvent>
 #include <QSettings>
@@ -91,12 +92,26 @@ ThumbnailBrowser::ThumbnailBrowser(ThumbnailService* service, QWidget* parent) :
   m_View->setSelectionMode(QAbstractItemView::SingleSelection);
   layout->addWidget(m_View, 1);
 
-  // Smooth scrolling: per-pixel positions, and a wheel notch moves a fraction
-  // of a thumbnail row, eased out, so the eye can follow the motion.
+  // Smooth scrolling: per-pixel positions; wheel notches move a spring's
+  // target, and a critically damped spring follows it, so the motion
+  // accelerates and decelerates instead of jumping.
   m_View->setVerticalScrollMode(QAbstractItemView::ScrollPerPixel);
-  m_ScrollAnim = new QPropertyAnimation(m_View->verticalScrollBar(), "value", this);
-  m_ScrollAnim->setEasingCurve(QEasingCurve::OutCubic);
-  m_ScrollAnim->setDuration(220);
+  m_ScrollTimer = new QTimer(this);
+  m_ScrollTimer->setInterval(8);
+  connect(m_ScrollTimer, &QTimer::timeout, this, [this]() {
+    constexpr double omega = 14.0; // spring stiffness, 1/s
+    const double dt = m_ScrollTimer->interval() / 1000.0;
+    // Semi-implicit Euler for x'' = -2*omega*x' - omega^2*(x - target)
+    m_ScrollVel += (-2 * omega * m_ScrollVel - omega * omega * (m_ScrollPos - m_ScrollTarget)) * dt;
+    m_ScrollPos += m_ScrollVel * dt;
+    QScrollBar* bar = m_View->verticalScrollBar();
+    bar->setValue(qRound(m_ScrollPos));
+    if (qAbs(m_ScrollPos - m_ScrollTarget) < 0.5 && qAbs(m_ScrollVel) < 5)
+    {
+      bar->setValue(qRound(m_ScrollTarget));
+      m_ScrollTimer->stop();
+    }
+  });
   m_View->viewport()->installEventFilter(this);
 
   m_View->setContextMenuPolicy(Qt::CustomContextMenu);
@@ -130,17 +145,22 @@ bool ThumbnailBrowser::eventFilter(QObject* watched, QEvent* event)
   if (watched == m_View->viewport() && event->type() == QEvent::Wheel)
   {
     auto* wheel = static_cast<QWheelEvent*>(event);
-    // Touchpads already deliver smooth pixel deltas; leave those alone.
-    if (wheel->pixelDelta().isNull() && wheel->angleDelta().y() != 0 && !(wheel->modifiers() & Qt::ControlModifier))
+    // Handled even when the event carries a pixelDelta: many mice report one (libinput),
+    // and Qt's default would then scroll by hundreds of pixels per notch.
+    if (wheel->angleDelta().y() != 0 && !(wheel->modifiers() & Qt::ControlModifier))
     {
       QScrollBar* bar = m_View->verticalScrollBar();
-      const int step = qMax(16, m_View->gridSize().height() / 3); // pixels per notch
-      const int from = m_ScrollAnim->state() == QAbstractAnimation::Running ? m_ScrollTarget : bar->value();
-      m_ScrollTarget = qBound(bar->minimum(), from - wheel->angleDelta().y() * step / 120, bar->maximum());
-      m_ScrollAnim->stop();
-      m_ScrollAnim->setStartValue(bar->value());
-      m_ScrollAnim->setEndValue(m_ScrollTarget);
-      m_ScrollAnim->start();
+      const double row = m_View->gridSize().height(); // one wheel notch (120) == one thumbnail row
+      if (!m_ScrollTimer->isActive())
+      {
+        m_ScrollPos = m_ScrollTarget = bar->value();
+        m_ScrollVel = 0;
+      }
+      // Fractional deltas from hi-res wheels accumulate, so no rounding here.
+      // A single event never moves more than one row, whatever delta the device reports.
+      const double notches = qBound(-1.0, wheel->angleDelta().y() / 120.0, 1.0);
+      m_ScrollTarget = qBound<double>(bar->minimum(), m_ScrollTarget - notches * row, bar->maximum());
+      m_ScrollTimer->start();
       return true;
     }
   }
