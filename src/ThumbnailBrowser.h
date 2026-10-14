@@ -7,6 +7,7 @@
 
 class QLineEdit;
 class QListView;
+class QPropertyAnimation;
 class QSlider;
 class QStandardItem;
 class QStandardItemModel;
@@ -30,7 +31,9 @@ class ThumbnailBrowser : public QWidget
     void refresh();
 
     QString currentFile() const;
-    void selectFile(const QString& path);
+    // Makes the file current (which loads it, through fileSelected, unless
+    // `load` is false). False when it is not in the list.
+    bool selectFile(const QString& path, bool load = true);
     // The model file `delta` places after the current one (wraps around), or empty.
     QString adjacentFile(int delta) const { return adjacentFile(delta, currentFile()); }
     // The same, counted from `from`.
@@ -45,6 +48,10 @@ class ThumbnailBrowser : public QWidget
     // A model was double-clicked or Enter was pressed.
     void fileActivated(const QString& path);
     void directoryChanged(const QString& path);
+
+  protected:
+    // Turns wheel notches into short, eased scrolls (see the constructor).
+    bool eventFilter(QObject* watched, QEvent* event) override;
 
   private:
     void onActivated(const QModelIndex& index);
@@ -61,6 +68,8 @@ class ThumbnailBrowser : public QWidget
     QLineEdit* m_PathEdit = nullptr;
     QSlider* m_SizeSlider = nullptr;
     QListView* m_View = nullptr;
+    QPropertyAnimation* m_ScrollAnim = nullptr;
+    int m_ScrollTarget = 0;
     QStandardItemModel* m_Model = nullptr;
     QHash<QString, QStandardItem*> m_Items; // by file path
 };

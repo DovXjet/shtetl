@@ -97,6 +97,10 @@ void ThumbnailWorker::makeThumbnail(const QString& path, CancelFlag cancel)
     {
       spdlog::error("Thumbnail of {} failed: {}", path.toStdString(), e.what());
     }
+    catch (const vsg::Exception& e) // not a std::exception; would end the program
+    {
+      spdlog::error("Thumbnail of {} failed: {} (VkResult {})", path.toStdString(), e.message, e.result);
+    }
   }
   emit resultReady(path, image);
 }

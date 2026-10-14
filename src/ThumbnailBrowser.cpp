@@ -7,13 +7,18 @@
 #include <QHBoxLayout>
 #include <QLineEdit>
 #include <QListView>
+#include <QMimeData>
 #include <QPainter>
 #include <QPainterPath>
+#include <QPropertyAnimation>
+#include <QScrollBar>
+#include <QWheelEvent>
 #include <QSettings>
 #include <QSignalBlocker>
 #include <QSlider>
 #include <QStandardItemModel>
 #include <QToolButton>
+#include <QUrl>
 #include <QVBoxLayout>
 
 namespace
@@ -21,6 +26,32 @@ namespace
   constexpr int PathRole = Qt::UserRole + 1;
   constexpr int IsDirRole = Qt::UserRole + 2;
   constexpr int ThumbnailPixels = 256; // size of the stored thumbnails
+
+  // Dragging a model out of the browser offers it as a file URL, so it can be
+  // dropped into other programs (Explorer, XjetStudio) like a file from Explorer.
+  class FileDragModel : public QStandardItemModel
+  {
+    public:
+      using QStandardItemModel::QStandardItemModel;
+
+      Qt::ItemFlags flags(const QModelIndex& index) const override
+      {
+        Qt::ItemFlags f = QStandardItemModel::flags(index);
+        if (index.isValid() && index.data(IsDirRole).toBool()) f &= ~Qt::ItemIsDragEnabled;
+        return f;
+      }
+
+      QMimeData* mimeData(const QModelIndexList& indexes) const override
+      {
+        QList<QUrl> urls;
+        for (const QModelIndex& index : indexes)
+          if (!index.data(IsDirRole).toBool()) urls << QUrl::fromLocalFile(index.data(PathRole).toString());
+        if (urls.isEmpty()) return nullptr;
+        auto* mime = new QMimeData;
+        mime->setUrls(urls);
+        return mime;
+      }
+  };
 } // namespace
 
 ThumbnailBrowser::ThumbnailBrowser(ThumbnailService* service, QWidget* parent) : QWidget(parent), m_Service(service)
@@ -42,17 +73,28 @@ ThumbnailBrowser::ThumbnailBrowser(ThumbnailService* service, QWidget* parent) :
   bar->addWidget(m_SizeSlider);
   layout->addLayout(bar);
 
-  m_Model = new QStandardItemModel(this);
+  m_Model = new FileDragModel(this);
   m_View = new QListView(this);
   m_View->setModel(m_Model);
   m_View->setViewMode(QListView::IconMode);
   m_View->setResizeMode(QListView::Adjust);
   m_View->setMovement(QListView::Static);
+  m_View->setDragEnabled(true);
+  m_View->setDragDropMode(QAbstractItemView::DragOnly);
+  m_View->setDefaultDropAction(Qt::CopyAction);
   m_View->setUniformItemSizes(true);
   m_View->setWordWrap(true);
   m_View->setEditTriggers(QAbstractItemView::NoEditTriggers);
   m_View->setSelectionMode(QAbstractItemView::SingleSelection);
   layout->addWidget(m_View, 1);
+
+  // Smooth scrolling: per-pixel positions, and a wheel notch moves a fraction
+  // of a thumbnail row, eased out, so the eye can follow the motion.
+  m_View->setVerticalScrollMode(QAbstractItemView::ScrollPerPixel);
+  m_ScrollAnim = new QPropertyAnimation(m_View->verticalScrollBar(), "value", this);
+  m_ScrollAnim->setEasingCurve(QEasingCurve::OutCubic);
+  m_ScrollAnim->setDuration(220);
+  m_View->viewport()->installEventFilter(this);
 
   connect(m_UpButton, &QToolButton::clicked, this, [this]() {
     QDir dir(m_Directory);
@@ -75,6 +117,28 @@ ThumbnailBrowser::ThumbnailBrowser(ThumbnailService* service, QWidget* parent) :
 ThumbnailBrowser::~ThumbnailBrowser()
 {
   if (m_Cancel) m_Cancel->store(true);
+}
+
+bool ThumbnailBrowser::eventFilter(QObject* watched, QEvent* event)
+{
+  if (watched == m_View->viewport() && event->type() == QEvent::Wheel)
+  {
+    auto* wheel = static_cast<QWheelEvent*>(event);
+    // Touchpads already deliver smooth pixel deltas; leave those alone.
+    if (wheel->pixelDelta().isNull() && wheel->angleDelta().y() != 0 && !(wheel->modifiers() & Qt::ControlModifier))
+    {
+      QScrollBar* bar = m_View->verticalScrollBar();
+      const int step = qMax(16, m_View->gridSize().height() / 3); // pixels per notch
+      const int from = m_ScrollAnim->state() == QAbstractAnimation::Running ? m_ScrollTarget : bar->value();
+      m_ScrollTarget = qBound(bar->minimum(), from - wheel->angleDelta().y() * step / 120, bar->maximum());
+      m_ScrollAnim->stop();
+      m_ScrollAnim->setStartValue(bar->value());
+      m_ScrollAnim->setEndValue(m_ScrollTarget);
+      m_ScrollAnim->start();
+      return true;
+    }
+  }
+  return QWidget::eventFilter(watched, event);
 }
 
 void ThumbnailBrowser::setIconSize(int size)
@@ -175,12 +239,16 @@ QString ThumbnailBrowser::currentFile() const
   return index.data(PathRole).toString();
 }
 
-void ThumbnailBrowser::selectFile(const QString& path)
+bool ThumbnailBrowser::selectFile(const QString& path, bool load)
 {
   auto it = m_Items.find(QFileInfo(path).absoluteFilePath());
-  if (it == m_Items.end()) return;
+  if (it == m_Items.end()) return false;
+  QItemSelectionModel* selection = m_View->selectionModel();
+  const bool wasBlocked = selection->blockSignals(!load);
   m_View->setCurrentIndex(it.value()->index());
+  selection->blockSignals(wasBlocked);
   m_View->scrollTo(it.value()->index());
+  return true;
 }
 
 QString ThumbnailBrowser::adjacentFile(int delta, const QString& from) const

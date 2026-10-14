@@ -17,7 +17,10 @@
 #include <vsg/utils/ComputeBounds.h>
 #include <vsgQt/Viewer.h>
 
+#include "Logging.h"
+
 #include <QCursor>
+#include <QGuiApplication>
 #include <QGridLayout>
 #include <QKeyEvent>
 #include <QMenu>
@@ -32,6 +35,33 @@
 
 namespace
 {
+  // A right-button click (no drag, no modifier keys) anywhere that the orientation
+  // cube did not take. It never marks the events handled, so the navigation
+  // presets that rotate with the right button see them as before.
+  class ContextClickHandler : public vsg::Inherit<vsg::Visitor, ContextClickHandler>
+  {
+    public:
+      std::function<void()> onClick;
+
+      void apply(vsg::ButtonPressEvent& e) override
+      {
+        if (e.handled || e.button != 3) return;
+        m_Pressed = true;
+        m_PressPos = vsg::vec2(e.x, e.y);
+      }
+
+      void apply(vsg::ButtonReleaseEvent& e) override
+      {
+        if (e.handled || e.button != 3 || !m_Pressed) return;
+        m_Pressed = false;
+        if (vsg::length(vsg::vec2(e.x, e.y) - m_PressPos) < 5 && onClick) onClick();
+      }
+
+    private:
+      bool m_Pressed = false;
+      vsg::vec2 m_PressPos = {0, 0};
+  };
+
   // Hiding the view (closing its window) makes Qt destroy the native window
   // behind the QWindow that createWindowContainer() embeds, and with it the
   // vsg::Window that vsgQt::Window::cleanup() releases. Re-showing builds a
@@ -275,7 +305,11 @@ void Viewport3D::onContainerResized()
 void Viewport3D::loadModel(const QString& path)
 {
   // Loaded on the side, so that a bad file leaves the current model in place.
-  LoadedModel loaded = ::loadModel(path, m_Options);
+  setModel(::loadModel(path, m_Options));
+}
+
+void Viewport3D::setModel(LoadedModel loaded)
+{
   // Keep the view orientation across models; only the framing is refit.
   auto previous = m_Model && m_Camera ? m_Camera->viewMatrix.cast<vsg::LookAt>() : nullptr;
   vsg::dvec3 toEye, up;
@@ -285,10 +319,37 @@ void Viewport3D::loadModel(const QString& path)
     up = previous->up;
   }
 
+  const auto oldModel = m_Model;
+  const auto oldBounds = m_ModelBounds;
+  const auto oldCompact = m_Compact;
   m_Model = loaded.node;
   m_ModelBounds = loaded.bounds;
   m_Compact = loaded.compact;
-  buildSceneGraph();
+  try
+  {
+    buildSceneGraph();
+  }
+  catch (const vsg::Exception& e)
+  {
+    // Typically the GPU running out of memory while the model is uploaded.
+    // vsg::Exception is not a std::exception, and the viewer was left half
+    // rebuilt (no render task), which shows as a view that never responds
+    // again - so put the previous model back and say what happened.
+    spdlog::error("Building the scene failed: {} (VkResult {})", e.message, e.result);
+    m_Model = oldModel;
+    m_ModelBounds = oldBounds;
+    m_Compact = oldCompact;
+    loaded = {};
+    try
+    {
+      buildSceneGraph();
+    }
+    catch (const vsg::Exception& again)
+    {
+      spdlog::error("Restoring the previous scene failed too: {}", again.message);
+    }
+    throw std::runtime_error("Out of GPU resources: " + e.message);
+  }
 
   if (previous && vsg::length(toEye) > 0.0)
   {
@@ -366,6 +427,7 @@ void Viewport3D::buildSceneGraph()
   // Drop the previous trackball and gizmo - they hold the now-stale camera.
   auto& handlers = m_Viewer->getEventHandlers();
   if (m_Trackball) handlers.erase(std::remove(handlers.begin(), handlers.end(), m_Trackball), handlers.end());
+  if (m_ContextClick) handlers.erase(std::remove(handlers.begin(), handlers.end(), m_ContextClick), handlers.end());
   if (m_OcclusionUpdater) handlers.erase(std::remove(handlers.begin(), handlers.end(), m_OcclusionUpdater), handlers.end());
   m_Occlusion = nullptr;
   m_OcclusionUpdater = nullptr;
@@ -391,9 +453,23 @@ void Viewport3D::buildSceneGraph()
   // The cube's context menu first (some presets bind the right button), then
   // the trackball, then the cube's click handler (bare LMB falls through to it).
   m_Viewer->addEventHandler(m_Gizmo->GetContextMenuHandler());
+  // Then a plain right-click elsewhere asks for the view's context menu.
+  auto contextClick = ContextClickHandler::create();
+  m_ContextClick = contextClick;
+  contextClick->onClick = [this]() {
+    // Queued, like the cube's menu. Ctrl/Shift/Alt + right button navigates.
+    if (QGuiApplication::keyboardModifiers() & (Qt::ShiftModifier | Qt::ControlModifier | Qt::AltModifier)) return;
+    const QPoint pos = QCursor::pos();
+    QMetaObject::invokeMethod(this, [this, pos]() { emit contextMenuRequested(pos); }, Qt::QueuedConnection);
+  };
+  m_Viewer->addEventHandler(m_ContextClick);
   m_Viewer->addEventHandler(m_Trackball);
   m_Viewer->addEventHandler(m_Gizmo->GetIntersectionHandler());
 
+  // The frames still in flight draw with the old scene graph and its buffers;
+  // let them finish before those are released (a 1 GB model's buffers pile up
+  // quickly when models follow each other).
+  if (!m_Viewer->recordAndSubmitTasks.empty()) m_Viewer->deviceWaitIdle();
   m_Viewer->recordAndSubmitTasks.clear();
   m_Viewer->presentations.clear();
   auto view3D = vsg::Group::create();

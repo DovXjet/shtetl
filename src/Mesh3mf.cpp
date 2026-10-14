@@ -4,6 +4,7 @@
 
 #include <zip.h>
 
+#include <algorithm>
 #include <map>
 #include <memory>
 #include <stdexcept>
@@ -101,7 +102,7 @@ namespace
   };
   using ZipArchive = std::unique_ptr<zip_t, ZipCloser>;
 
-  QByteArray readEntry(zip_t* zip, zip_int64_t index)
+  QByteArray readEntry(zip_t* zip, zip_int64_t index, const std::atomic<bool>* cancel)
   {
     zip_stat_t st;
     if (zip_stat_index(zip, static_cast<zip_uint64_t>(index), 0, &st) != 0 || !(st.valid & ZIP_STAT_SIZE)) return {};
@@ -111,7 +112,9 @@ namespace
     zip_int64_t done = 0;
     while (done < static_cast<zip_int64_t>(st.size))
     {
-      const zip_int64_t n = zip_fread(file.get(), data.data() + done, st.size - static_cast<zip_uint64_t>(done));
+      if (cancel && cancel->load()) throw std::runtime_error("Abort requested!");
+      const zip_uint64_t want = std::min<zip_uint64_t>(st.size - static_cast<zip_uint64_t>(done), 4u << 20); // in pieces, to notice a cancel
+      const zip_int64_t n = zip_fread(file.get(), data.data() + done, want);
       if (n <= 0) return {};
       done += n;
     }
@@ -119,7 +122,7 @@ namespace
   }
 } // namespace
 
-IndexedMesh read3MF(const QString& path)
+IndexedMesh read3MF(const QString& path, const std::atomic<bool>* cancel)
 {
   int zipError = 0;
   const QByteArray utf8Path = path.toUtf8();
@@ -139,7 +142,7 @@ IndexedMesh read3MF(const QString& path)
       }
     }
   if (modelIndex < 0) throw std::runtime_error("No 3D model in " + path.toStdString());
-  const QByteArray xml = readEntry(zip.get(), modelIndex);
+  const QByteArray xml = readEntry(zip.get(), modelIndex, cancel);
   if (xml.isEmpty()) throw std::runtime_error("Cannot read the 3D model of " + path.toStdString());
 
   std::map<int, Object> objects;
@@ -149,8 +152,10 @@ IndexedMesh read3MF(const QString& path)
   QXmlStreamReader reader(xml);
   Object* current = nullptr;
   bool inBuild = false;
+  size_t elements = 0;
   while (!reader.atEnd())
   {
+    if ((++elements & 0xFFFF) == 0 && cancel && cancel->load()) throw std::runtime_error("Abort requested!");
     reader.readNext();
     if (reader.isStartElement())
     {

@@ -5,6 +5,7 @@
 #include <QString>
 
 #include <atomic>
+#include <functional>
 #include <vector>
 
 // Triangle meshes in XjetStudio's compact form (ported from its
@@ -36,13 +37,16 @@ struct LoadedModel
 // (see resources/shaders/compact_mesh_gbuffer.frag).
 vsg::ref_ptr<vsg::Node> makeCompactGBufferNode(const CompactSource& source);
 
+// Called while an STL/3MF is packed, from the loading thread, with 0..100.
+using LoadProgress = std::function<void(int percent)>;
+
 // Loads a model file: STL and 3MF as compact meshes, anything else through
 // vsg::read (vsgXchange). Throws std::runtime_error on failure, and, when
 // *cancel turns true while an STL/3MF is being packed, "Abort requested!".
 // `diffuse` is the color of the compact meshes (STL and 3MF); the default is a
 // neutral light grey.
 LoadedModel loadModel(const QString& path, vsg::ref_ptr<vsg::Options> options, const std::atomic<bool>* cancel = nullptr,
-                      const vsg::vec4& diffuse = vsg::vec4(0.85f, 0.85f, 0.85f, 1.0f));
+                      const vsg::vec4& diffuse = vsg::vec4(0.85f, 0.85f, 0.85f, 1.0f), const LoadProgress& progress = {});
 
 // An indexed triangle mesh, as 3MF delivers it.
 struct IndexedMesh
@@ -53,8 +57,8 @@ struct IndexedMesh
 
 // Reads all the build items of a 3MF file (with their transforms and
 // components) into one mesh in millimeters. Throws std::runtime_error.
-IndexedMesh read3MF(const QString& path);
+IndexedMesh read3MF(const QString& path, const std::atomic<bool>* cancel = nullptr);
 
 // STL, binary or ASCII, into a mesh of unconnected triangles.
-LoadedModel loadStl(const QString& path, const std::atomic<bool>* cancel, const vsg::vec4& diffuse);
-LoadedModel load3MF(const QString& path, const std::atomic<bool>* cancel, const vsg::vec4& diffuse);
+LoadedModel loadStl(const QString& path, const std::atomic<bool>* cancel, const vsg::vec4& diffuse, const LoadProgress& progress = {});
+LoadedModel load3MF(const QString& path, const std::atomic<bool>* cancel, const vsg::vec4& diffuse, const LoadProgress& progress = {});

@@ -1,11 +1,19 @@
 #pragma once
 
+#include "CompactMesh.h"
+
 #include <QDateTime>
+#include <QElapsedTimer>
 #include <QFileSystemWatcher>
 #include <QMainWindow>
+#include <QThreadPool>
 #include <QTimer>
 
+#include <atomic>
+#include <memory>
+
 class QAction;
+class QProgressBar;
 class QCloseEvent;
 class QDockWidget;
 class QMenu;
@@ -32,7 +40,15 @@ class MainWindow : public QMainWindow
     void copyToClipboard();
     void openFileDialog();
     void openDirectoryDialog();
-    bool loadModel(const QString& path); // false: not loaded, the previous model stays
+    // Loads in the background (the previous model stays in view meanwhile, and
+    // a load still running is dropped); see onModelLoaded().
+    void loadModel(const QString& path);
+    void onModelLoaded(quint64 id, const QString& path, LoadedModel model, const QString& error);
+    void cancelLoad(); // the load in progress, if any
+    void updateLoadProgress();
+    // The model `path` could not be shown: on to the next one in the direction
+    // that was being stepped through, if any.
+    void skipFailed(const QString& path, int direction);
     void showDirectory(const QString& path);
     void goAdjacent(int delta);
     void reload();
@@ -50,6 +66,25 @@ class MainWindow : public QMainWindow
     QMenu* m_RecentMenu = nullptr;
     QAction* m_CopyAction = nullptr;
     QString m_CurrentFile;
+
+    // The background load: on their own threads (two at most, so that a new
+    // one need not wait for the cancelled one to notice), numbered so that the result of one
+    // that was replaced is ignored.
+    struct Load
+    {
+        quint64 id = 0; // of the latest started
+        bool running = false;
+        QString path;
+        int direction = 0; // the step (+1/-1) that led to it, to skip bad files
+        std::shared_ptr<std::atomic<bool>> cancel;
+        std::shared_ptr<std::atomic<int>> percent; // -1: not known
+    };
+    QThreadPool m_LoadPool;
+    Load m_Load;
+    int m_StepDirection = 0; // for the next loadModel(), see goAdjacent()
+    QElapsedTimer m_LoadTime;
+    QTimer m_ProgressTimer;
+    QProgressBar* m_Progress = nullptr;
 
     // Auto reload: the file and its directory are watched (editors and CadQuery
     // scripts often replace a file rather than write it), changes are debounced,

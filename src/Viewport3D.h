@@ -56,6 +56,9 @@ class Viewport3D : public QWidget
     // Replaces the model shown. Throws std::runtime_error on failure, in which
     // case the current model stays.
     void loadModel(const QString& path);
+    // Shows a model loaded elsewhere (::loadModel(), which may run on another
+    // thread); this part has to run on the GUI thread. Throws as loadModel().
+    void setModel(LoadedModel loaded);
     void clearModel();
     // Bounds of the model shown, in its own coordinates.
     vsg::dbox modelBounds() const { return m_ModelBounds; }
@@ -83,6 +86,8 @@ class Viewport3D : public QWidget
 
   signals:
     void projectionChanged(bool orthographic);
+    // A plain right-click in the view (not a drag, not on the orientation cube).
+    void contextMenuRequested(const QPoint& globalPos);
 
   private:
     bool eventFilter(QObject* watched, QEvent* event) override;
@@ -104,6 +109,7 @@ class Viewport3D : public QWidget
     vsg::ref_ptr<CToggleProjection> m_Projection;
     vsg::ref_ptr<MyTrackball> m_Trackball;
     vsg::ref_ptr<CCubeGizmo> m_Gizmo;
+    vsg::ref_ptr<vsg::Visitor> m_ContextClick;
     vsg::ref_ptr<vsg::RenderGraph> m_RenderGraph;
     vsg::ref_ptr<vsg::Node> m_Model;
     vsg::dbox m_ModelBounds;

@@ -20,6 +20,9 @@
 #include <QLabel>
 #include <QLocale>
 #include <QPixmap>
+#include <QProgressBar>
+#include <QShortcut>
+#include <QMenu>
 #include <QMenuBar>
 #include <QMimeData>
 #include <QMouseEvent>
@@ -29,6 +32,8 @@
 #include <QSysInfo>
 #include <QUrl>
 #include <QVBoxLayout>
+
+#include <utility>
 
 namespace
 {
@@ -56,6 +61,25 @@ MainWindow::MainWindow()
 
   connect(m_Browser, &ThumbnailBrowser::fileSelected, this, &MainWindow::loadModel);
 
+  // Right-click in the 3D view: the Edit > Copy action (set up in createMenus()).
+  connect(m_Viewport, &Viewport3D::contextMenuRequested, this, [this](const QPoint& pos) {
+    QMenu menu(this);
+    menu.addAction(m_CopyAction);
+    menu.exec(pos);
+  });
+
+  // The progress of a model being loaded in the background; it shows up only
+  // when the load takes a while, and Escape drops the load.
+  m_LoadPool.setMaxThreadCount(2); // the one dropped may still be winding down
+  m_Progress = new QProgressBar(this);
+  m_Progress->setFixedWidth(180);
+  m_Progress->setVisible(false);
+  statusBar()->addPermanentWidget(m_Progress);
+  m_ProgressTimer.setInterval(50);
+  connect(&m_ProgressTimer, &QTimer::timeout, this, &MainWindow::updateLoadProgress);
+  auto* escape = new QShortcut(QKeySequence(Qt::Key_Escape), this);
+  connect(escape, &QShortcut::activated, this, &MainWindow::cancelLoad);
+
   m_ReloadTimer.setSingleShot(true);
   m_ReloadTimer.setInterval(400);
   connect(&m_ReloadTimer, &QTimer::timeout, this, &MainWindow::autoReload);
@@ -81,6 +105,8 @@ MainWindow::MainWindow()
 MainWindow::~MainWindow()
 {
   qApp->removeEventFilter(this);
+  if (m_Load.cancel) m_Load.cancel->store(true);
+  m_LoadPool.waitForDone();
   // Stops the thumbnail thread, which renders on the viewport's device,
   // before the viewport (and the device) is destroyed.
   delete m_Service;
@@ -265,8 +291,8 @@ void MainWindow::openPath(const QString& path)
   else if (info.isFile())
   {
     showDirectory(info.absolutePath());
-    m_Browser->selectFile(info.absoluteFilePath()); // loads it
-    if (m_CurrentFile != info.absoluteFilePath()) loadModel(info.absoluteFilePath()); // not a listed type
+    if (!m_Browser->selectFile(info.absoluteFilePath())) // loads it
+      loadModel(info.absoluteFilePath()); // not a listed type
   }
   else
   {
@@ -298,21 +324,77 @@ void MainWindow::showDirectory(const QString& path)
   QSettings().setValue("lastDirectory", m_Browser->directory());
 }
 
-bool MainWindow::loadModel(const QString& path)
+void MainWindow::loadModel(const QString& path)
 {
-  if (path.isEmpty()) return false;
-  try
+  if (path.isEmpty()) return;
+  // A load still running is dropped: its thread stops at its next check.
+  if (m_Load.cancel) m_Load.cancel->store(true);
+
+  m_Load.id++;
+  m_Load.running = true;
+  m_Load.path = path;
+  m_Load.direction = std::exchange(m_StepDirection, 0);
+  m_Load.cancel = std::make_shared<std::atomic<bool>>(false);
+  m_Load.percent = std::make_shared<std::atomic<int>>(-1);
+  m_LoadTime.start();
+  m_ProgressTimer.start();
+  spdlog::info("Loading {}", path.toStdString());
+  statusBar()->showMessage("Loading " + QFileInfo(path).fileName() + "... (Esc cancels)");
+
+  // The loading itself touches no GUI or GPU state, so it can run on its own
+  // thread; the result is handed back to this one.
+  const quint64 id = m_Load.id;
+  const auto cancel = m_Load.cancel;
+  const auto percent = m_Load.percent;
+  const auto options = m_Viewport->options();
+  m_LoadPool.start([this, id, path, cancel, percent, options]() {
+    LoadedModel model;
+    QString error;
+    try
+    {
+      model = ::loadModel(path, options, cancel.get(), vsg::vec4(0.85f, 0.85f, 0.85f, 1.0f), [percent](int p) { percent->store(p); });
+    }
+    catch (const std::exception& e)
+    {
+      error = QString::fromUtf8(e.what());
+    }
+    catch (const vsg::Exception& e) // not a std::exception
+    {
+      error = QString::fromStdString(e.message);
+    }
+    QMetaObject::invokeMethod(this, [this, id, path, model, error]() { onModelLoaded(id, path, model, error); }, Qt::QueuedConnection);
+  });
+}
+
+void MainWindow::onModelLoaded(quint64 id, const QString& path, LoadedModel model, const QString& error)
+{
+  if (id != m_Load.id || !m_Load.running) return; // replaced or cancelled meanwhile
+  m_Load.running = false;
+  m_ProgressTimer.stop();
+  m_Progress->setVisible(false);
+  const int direction = m_Load.direction;
+
+  QString failure = error;
+  if (failure.isEmpty())
   {
-    spdlog::info("Loading {}", path.toStdString());
-    m_Viewport->loadModel(path);
+    try
+    {
+      m_Viewport->setModel(model);
+    }
+    catch (const std::exception& e)
+    {
+      failure = QString::fromUtf8(e.what());
+    }
   }
-  catch (const std::exception& e)
+  if (!failure.isEmpty())
   {
-    spdlog::error("Failed to load {}: {}", path.toStdString(), e.what());
-    statusBar()->showMessage(QString("Failed to load %1: %2").arg(QFileInfo(path).fileName(), e.what()));
-    return false;
+    spdlog::error("Failed to load {}: {}", path.toStdString(), failure.toStdString());
+    statusBar()->showMessage(QString("Failed to load %1: %2").arg(QFileInfo(path).fileName(), failure));
+    skipFailed(path, direction);
+    return;
   }
-  spdlog::info("Loaded {}", path.toStdString());
+
+  spdlog::info("Loaded {} in {} ms", path.toStdString(), m_LoadTime.elapsed());
   m_CurrentFile = path;
   m_CopyAction->setEnabled(true);
   setWindowTitle(QFileInfo(path).fileName() + " - shtetl");
@@ -328,7 +410,54 @@ bool MainWindow::loadModel(const QString& path)
   m_LoadedModified = info.lastModified();
   m_LoadedSize = info.size();
   watchCurrentFile();
-  return true;
+}
+
+void MainWindow::cancelLoad()
+{
+  if (!m_Load.running) return;
+  m_Load.cancel->store(true);
+  m_Load.running = false;
+  m_Load.id++; // its result is ignored
+  m_ProgressTimer.stop();
+  m_Progress->setVisible(false);
+  statusBar()->showMessage("Loading cancelled", 3000);
+}
+
+void MainWindow::updateLoadProgress()
+{
+  if (!m_Load.running) return;
+  // Only a load that takes a while gets a bar; most are over before that.
+  if (!m_Progress->isVisible())
+  {
+    if (m_LoadTime.elapsed() < 300) return;
+    m_Progress->setVisible(true);
+  }
+  const int percent = m_Load.percent->load();
+  if (percent < 0)
+    m_Progress->setRange(0, 0); // not known: a busy bar
+  else
+  {
+    m_Progress->setRange(0, 100);
+    m_Progress->setValue(percent);
+  }
+}
+
+// A file that cannot be loaded is dropped from the list when stepping through
+// the models (next/previous), and the step goes on past it.
+void MainWindow::skipFailed(const QString& path, int direction)
+{
+  if (direction == 0) return;
+  const QString next = m_Browser->adjacentFile(direction, path);
+  m_Browser->removeFiles({path});
+  if (next.isEmpty() || next == path) return;
+  if (next == m_CurrentFile)
+  {
+    m_Browser->selectFile(next, false); // back on the model shown
+    return;
+  }
+  m_StepDirection = direction;
+  m_Browser->selectFile(next); // loads it
+  m_StepDirection = 0;
 }
 
 void MainWindow::watchCurrentFile()
@@ -383,26 +512,18 @@ void MainWindow::copyToClipboard()
 
 void MainWindow::goAdjacent(int delta)
 {
-  // Files that fail to load are skipped silently, and dropped from the list.
-  QStringList failed;
-  QString from = m_Browser->currentFile();
-  for (;;)
-  {
-    const QString next = m_Browser->adjacentFile(delta, from);
-    if (next.isEmpty() || next == m_CurrentFile || failed.contains(next)) break;
-    m_Browser->selectFile(next); // loads it
-    if (m_CurrentFile == next) break;
-    failed << next;
-    from = next;
-  }
-  m_Browser->removeFiles(failed);
-  if (!failed.isEmpty()) m_Browser->selectFile(m_CurrentFile); // back on the model shown
+  // From the selection, which runs ahead of the model shown while one loads.
+  const QString next = m_Browser->adjacentFile(delta);
+  if (next.isEmpty()) return;
+  m_StepDirection = delta;
+  m_Browser->selectFile(next); // loads it
+  m_StepDirection = 0;
 }
 
 void MainWindow::reload()
 {
-  m_Browser->refresh();
-  if (!m_CurrentFile.isEmpty()) loadModel(m_CurrentFile);
+  m_Browser->refresh(); // loads the selected model again
+  if (!m_CurrentFile.isEmpty() && m_Browser->currentFile() != m_CurrentFile) loadModel(m_CurrentFile);
 }
 
 void MainWindow::addRecent(const QString& path)

@@ -121,14 +121,21 @@ namespace
   // vec3. Two passes over them (bounds, then encoding), so that a source that
   // reads them straight from a mapped file never needs them in memory twice.
   template <class GetTriangle>
-  LoadedModel pack(size_t faces, GetTriangle getTriangle, const std::atomic<bool>* cancel, const vsg::vec4& diffuse)
+  LoadedModel pack(size_t faces, GetTriangle getTriangle, const std::atomic<bool>* cancel, const vsg::vec4& diffuse, const LoadProgress& progress)
   {
     if (faces == 0) throw std::runtime_error("The file has no triangles");
     if (faces > 0x7FFFFFFF / 3) throw std::runtime_error("Too many triangles");
 
     vsg::vec3 lo(1e30f, 1e30f, 1e30f), hi(-1e30f, -1e30f, -1e30f);
+    // The bounds are the first half of the work, the encoding the second.
+    const size_t boundsChunk = std::max<size_t>(10000, faces / 100);
     for (size_t i = 0; i < faces; ++i)
     {
+      if (i % boundsChunk == 0)
+      {
+        if (cancel && cancel->load()) throw std::runtime_error("Abort requested!");
+        if (progress) progress(static_cast<int>(i * 50 / faces));
+      }
       vsg::vec3 p[3];
       getTriangle(i, p);
       for (const auto& v : p)
@@ -152,6 +159,7 @@ namespace
     for (int64_t start = 0; start < static_cast<int64_t>(faces); start += chunk)
     {
       if (cancel && cancel->load()) throw std::runtime_error("Abort requested!");
+      if (progress) progress(50 + static_cast<int>(start * 50 / static_cast<int64_t>(faces)));
       const int64_t end = std::min<int64_t>(start + chunk, static_cast<int64_t>(faces));
 
 #pragma omp parallel for schedule(static)
@@ -205,7 +213,7 @@ vsg::ref_ptr<vsg::Node> makeCompactGBufferNode(const CompactSource& source)
   return makeNode(source, true);
 }
 
-LoadedModel loadStl(const QString& path, const std::atomic<bool>* cancel, const vsg::vec4& diffuse)
+LoadedModel loadStl(const QString& path, const std::atomic<bool>* cancel, const vsg::vec4& diffuse, const LoadProgress& progress)
 {
   QFile file(path);
   if (!file.open(QIODevice::ReadOnly)) throw std::runtime_error("Cannot open " + path.toStdString());
@@ -232,7 +240,7 @@ LoadedModel loadStl(const QString& path, const std::atomic<bool>* cancel, const 
       return pack(count, [data](size_t i, vsg::vec3* p) {
         const uchar* tri = data + 84 + 50 * i + 12; // after the normal
         for (int v = 0; v < 3; ++v) p[v] = readVec3(tri + 12 * v);
-      }, cancel, diffuse);
+      }, cancel, diffuse, progress);
     }
     file.seek(0);
   }
@@ -245,6 +253,7 @@ LoadedModel loadStl(const QString& path, const std::atomic<bool>* cancel, const 
   size_t at = 0;
   while ((at = view.find("vertex", at)) != std::string_view::npos)
   {
+    if ((vertices.size() & 0xFFFF) == 0 && cancel && cancel->load()) throw std::runtime_error("Abort requested!");
     const char* cur = view.data() + at + 6;
     float f[3];
     for (int k = 0; k < 3; ++k)
@@ -260,22 +269,23 @@ LoadedModel loadStl(const QString& path, const std::atomic<bool>* cancel, const 
   if (vertices.empty() || vertices.size() % 3 != 0) throw std::runtime_error(path.toStdString() + " is not a valid STL file");
   return pack(vertices.size() / 3, [&vertices](size_t i, vsg::vec3* p) {
     for (int v = 0; v < 3; ++v) p[v] = vertices[i * 3 + v];
-  }, cancel, diffuse);
+  }, cancel, diffuse, progress);
 }
 
-LoadedModel load3MF(const QString& path, const std::atomic<bool>* cancel, const vsg::vec4& diffuse)
+LoadedModel load3MF(const QString& path, const std::atomic<bool>* cancel, const vsg::vec4& diffuse, const LoadProgress& progress)
 {
-  const IndexedMesh mesh = read3MF(path);
+  const IndexedMesh mesh = read3MF(path, cancel);
   return pack(mesh.triangles.size(), [&mesh](size_t i, vsg::vec3* p) {
     for (int v = 0; v < 3; ++v) p[v] = mesh.vertices[mesh.triangles[i][v]];
-  }, cancel, diffuse);
+  }, cancel, diffuse, progress);
 }
 
-LoadedModel loadModel(const QString& path, vsg::ref_ptr<vsg::Options> options, const std::atomic<bool>* cancel, const vsg::vec4& diffuse)
+LoadedModel loadModel(const QString& path, vsg::ref_ptr<vsg::Options> options, const std::atomic<bool>* cancel, const vsg::vec4& diffuse,
+                     const LoadProgress& progress)
 {
   const QString ext = QFileInfo(path).suffix().toLower();
-  if (ext == "stl") return loadStl(path, cancel, diffuse);
-  if (ext == "3mf") return load3MF(path, cancel, diffuse);
+  if (ext == "stl") return loadStl(path, cancel, diffuse, progress);
+  if (ext == "3mf") return load3MF(path, cancel, diffuse, progress);
 
   auto node = vsg::read_cast<vsg::Node>(shtetl::pathToUtf8(shtetl::qStringToPath(path)), options);
   if (!node) throw std::runtime_error("Could not read " + path.toStdString());
