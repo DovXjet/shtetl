@@ -1,5 +1,6 @@
 #pragma once
 
+#include <vsg/animation/Animation.h>
 #include <vsg/all.h>
 
 #include <QString>
@@ -36,6 +37,7 @@ struct LoadedModel
     vsg::ref_ptr<vsg::Node> node;
     vsg::dbox bounds;
     CompactSource compact;
+    vsg::Animations animations; // of the file (glTF, ...), none for STL and 3MF
 };
 
 // The node that draws a compact mesh into the window (with source.pbr, the

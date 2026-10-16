@@ -12,6 +12,7 @@
 #include <atomic>
 #include <memory>
 
+class AnimationBar;
 class QAction;
 class QProgressBar;
 class SceneSettingsDialog;
@@ -62,6 +63,9 @@ class MainWindow : public QMainWindow
     // Declared first, so destroyed last: the thumbnail thread stops (see the
     // destructor) before the viewport takes the Vulkan device with it.
     Viewport3D* m_Viewport = nullptr;
+    AnimationBar* m_AnimationBar = nullptr; // under the viewport, while the model has animations
+    QAction* m_NextAction = nullptr;
+    QAction* m_PreviousAction = nullptr;
     ThumbnailService* m_Service = nullptr;
     ThumbnailBrowser* m_Browser = nullptr;
     QDockWidget* m_BrowserDock = nullptr;

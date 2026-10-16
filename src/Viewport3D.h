@@ -1,6 +1,7 @@
 #pragma once
 
 #include "AmbientOcclusion.h"
+#include "AnimationPlayer.h"
 #include "CompactMesh.h"
 #include "CubeGizmo.h"
 #include "EdgeMesh.h"
@@ -131,6 +132,9 @@ class Viewport3D : public QWidget
     // The widest line the device draws.
     double maxEdgeWidth() const;
 
+    // Plays the animations of the model shown (glTF, ...); none for the others.
+    AnimationPlayer* animationPlayer() const { return m_AnimationPlayer; }
+
     void toggleProjection() { setOrthographic(!m_Orthographic); }
     void setOrthographic(bool orthographic);
     bool isOrthographic() const { return m_Orthographic; }
@@ -222,6 +226,7 @@ class Viewport3D : public QWidget
     QThread* m_EdgeThread = nullptr; // computing them
     std::shared_ptr<std::atomic<bool>> m_EdgeCancel;
     int m_EdgeGeneration = 0; // counts the models, so that a late result is known to be stale
+    AnimationPlayer* m_AnimationPlayer = nullptr; // owned by Qt
     vsg::dvec3 m_FitCenter{0.0, 0.0, 0.0};
     double m_FitRadius = 1.0;
     bool m_Orthographic = false;

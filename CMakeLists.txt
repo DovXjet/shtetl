@@ -61,6 +61,8 @@ add_executable(shtetl
   src/MainWindow.cpp
   src/SceneSettingsDialog.cpp
   src/Viewport3D.cpp
+  src/AnimationPlayer.cpp
+  src/AnimationBar.cpp
   src/CubeGizmo.cpp
   src/ModelFormats.cpp
   src/CompactMesh.cpp

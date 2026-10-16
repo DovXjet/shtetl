@@ -227,6 +227,10 @@ Viewport3D::Viewport3D(QWidget* parent) : QWidget(parent)
 
   m_Options = createModelOptions();
 
+  // The poses change between frames; the viewer renders on demand.
+  m_AnimationPlayer = new AnimationPlayer(this);
+  connect(m_AnimationPlayer, &AnimationPlayer::posesChanged, this, [this]() { m_Viewer->request(); });
+
   m_Viewer->addEventHandler(vsg::CloseHandler::create(m_Viewer));
 
   // The images of the occlusion have the size of the window: after it has
@@ -363,10 +367,12 @@ void Viewport3D::setModel(LoadedModel loaded)
   }
   fitAll(false);
   resetEdges();
+  m_AnimationPlayer->setAnimations(loaded.animations);
 }
 
 void Viewport3D::clearModel()
 {
+  m_AnimationPlayer->setAnimations({});
   m_Model = nullptr;
   m_ModelBounds = vsg::dbox();
   m_Compact = {};

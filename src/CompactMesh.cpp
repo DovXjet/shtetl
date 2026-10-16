@@ -4,18 +4,23 @@
 #include "QtPathUtils.h"
 #include "ShaderResources.h"
 
+#include <vsg/animation/FindAnimations.h>
 #include <vsg/io/read.h>
 #include <vsg/utils/ComputeBounds.h>
 
 #include "Logging.h"
 
 #include <QFile>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QFileInfo>
 
 #include <algorithm>
 #include <charconv>
 #include <cmath>
 #include <cstring>
+#include <sstream>
 #include <stdexcept>
 #include <string_view>
 #include <unordered_set>
@@ -304,6 +309,40 @@ LoadedModel load3MF(const QString& path, const std::atomic<bool>* cancel, const 
 
 namespace
 {
+  // vsgXchange reads a .glb only when the length of its binary chunk is exactly
+  // the byteLength of its first buffer, but the spec has the chunk padded to a
+  // multiple of 4 bytes, which exporters such as Sketchfab's do: no mesh and no
+  // animation data is read then. Reads such a file with the length of the chunk
+  // set to the buffer's; null when the file needs no help (or has none to give).
+  vsg::ref_ptr<vsg::Node> readGlbWithPaddedBinaryChunk(const QString& path, const vsg::ref_ptr<vsg::Options>& options)
+  {
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly)) return {};
+    QByteArray bytes = file.readAll();
+    auto u32 = [&bytes](qsizetype offset) {
+      uint32_t value = 0; // little endian, as the file
+      std::memcpy(&value, bytes.constData() + offset, sizeof(value));
+      return value;
+    };
+    constexpr uint32_t JsonChunk = 0x4E4F534A, BinChunk = 0x004E4942;
+    if (bytes.size() < 28 || u32(0) != 0x46546C67 /* "glTF" */ || u32(16) != JsonChunk) return {};
+    const qsizetype binHeader = 20 + qsizetype(u32(12));
+    if (binHeader + 8 > bytes.size() || u32(binHeader + 4) != BinChunk) return {};
+    const QJsonDocument json = QJsonDocument::fromJson(bytes.mid(20, qsizetype(u32(12))));
+    const QJsonObject buffer = json.object().value("buffers").toArray().first().toObject();
+    if (buffer.isEmpty() || buffer.contains("uri")) return {};
+    const uint32_t declared = uint32_t(buffer.value("byteLength").toDouble(-1));
+    const uint32_t chunkLength = u32(binHeader);
+    if (declared >= chunkLength || chunkLength - declared > 3) return {};
+    std::memcpy(bytes.data() + binHeader, &declared, sizeof(declared));
+
+    auto local = vsg::Options::create(*options);
+    local->extensionHint = ".glb";
+    std::istringstream stream(std::string(bytes.constData(), size_t(bytes.size())));
+    spdlog::info("loadModel: {} has a padded binary chunk ({} bytes for a buffer of {}); reading it with the chunk trimmed", path.toStdString(), chunkLength, declared);
+    return vsg::read_cast<vsg::Node>(stream, local);
+  }
+
   // Looks for a node that is its own ancestor. ComputeBounds and other
   // visitors recurse forever (stack overflow) on such a graph.
   bool findCycle(vsg::Object& object, std::unordered_set<const vsg::Object*>& path, std::unordered_set<const vsg::Object*>& done, std::string& where)
@@ -343,7 +382,9 @@ LoadedModel loadModel(const QString& path, vsg::ref_ptr<vsg::Options> options, c
 
   spdlog::info("loadModel: reading {}", path.toStdString());
   spdlog::default_logger()->flush(); // the log must survive a crash
-  auto node = vsg::read_cast<vsg::Node>(shtetl::pathToUtf8(shtetl::qStringToPath(path)), options);
+  vsg::ref_ptr<vsg::Node> node;
+  if (ext == "glb") node = readGlbWithPaddedBinaryChunk(path, options);
+  if (!node) node = vsg::read_cast<vsg::Node>(shtetl::pathToUtf8(shtetl::qStringToPath(path)), options);
   if (!node) throw std::runtime_error("Could not read " + path.toStdString());
   spdlog::info("loadModel: read {} ({})", path.toStdString(), node->className());
 
@@ -368,5 +409,9 @@ LoadedModel loadModel(const QString& path, vsg::ref_ptr<vsg::Options> options, c
   computeBounds.useNodeBounds = false; // exact: the cull-node spheres are loose
   node->accept(computeBounds);
   model.bounds = computeBounds.bounds;
+  vsg::FindAnimations findAnimations;
+  node->accept(findAnimations);
+  model.animations = findAnimations.animations;
+  spdlog::info("loadModel: {} animation(s)", model.animations.size());
   return model;
 }

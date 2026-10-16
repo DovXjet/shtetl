@@ -1,5 +1,7 @@
 #include "MainWindow.h"
 
+#include "AnimationBar.h"
+
 #include "ModelFormats.h"
 #include "Logging.h"
 #include "NavigationStyles.h"
@@ -23,6 +25,7 @@
 #include <QPixmap>
 #include <QProgressBar>
 #include <QShortcut>
+#include <QVBoxLayout>
 #include <QMenu>
 #include <QMenuBar>
 #include <QMimeData>
@@ -48,8 +51,16 @@ MainWindow::MainWindow()
   resize(1280, 800);
   setWindowTitle("shtetl");
 
-  m_Viewport = new Viewport3D(this);
-  setCentralWidget(m_Viewport);
+  // The 3D view, with the animation controls under it.
+  auto* central = new QWidget(this);
+  auto* centralLayout = new QVBoxLayout(central);
+  centralLayout->setContentsMargins(0, 0, 0, 0);
+  centralLayout->setSpacing(0);
+  m_Viewport = new Viewport3D(central);
+  m_AnimationBar = new AnimationBar(m_Viewport->animationPlayer(), central);
+  centralLayout->addWidget(m_Viewport, 1);
+  centralLayout->addWidget(m_AnimationBar);
+  setCentralWidget(central);
 
   // The thumbnailer renders on the viewport's device, which exists now.
   m_Service = new ThumbnailService(this);
@@ -380,10 +391,24 @@ void MainWindow::createMenus()
   viewMenu->addSeparator();
 
   // As vgiv's Next/Previous Image.
-  auto* next = viewMenu->addAction("Next Model", this, [this]() { goAdjacent(+1); });
-  next->setShortcuts({QKeySequence("Right"), QKeySequence("Shift+Down"), QKeySequence("Space"), QKeySequence::Forward});
-  auto* previous = viewMenu->addAction("Previous Model", this, [this]() { goAdjacent(-1); });
-  previous->setShortcuts({QKeySequence("Left"), QKeySequence("Shift+Up"), QKeySequence("Backspace"), QKeySequence::Back});
+  m_NextAction = viewMenu->addAction("Next Model", this, [this]() { goAdjacent(+1); });
+  m_PreviousAction = viewMenu->addAction("Previous Model", this, [this]() { goAdjacent(-1); });
+
+  // A model with animations is played with Space, Left and Right (as in a media
+  // player), which then don't step through the models; Shift+Down/Up, Backspace
+  // and the Back/Forward keys and buttons still do.
+  auto* animationMenu = viewMenu->addMenu("Animation");
+  animationMenu->addActions(m_AnimationBar->playbackActions());
+  animationMenu->menuAction()->setEnabled(m_Viewport->animationPlayer()->hasAnimations());
+  auto updateNavigationKeys = [this, animationMenu](bool animated) {
+    animationMenu->menuAction()->setEnabled(animated);
+    m_NextAction->setShortcuts(animated ? QList<QKeySequence>{QKeySequence("Shift+Down"), QKeySequence::Forward}
+                                        : QList<QKeySequence>{QKeySequence("Right"), QKeySequence("Shift+Down"), QKeySequence("Space"), QKeySequence::Forward});
+    m_PreviousAction->setShortcuts(animated ? QList<QKeySequence>{QKeySequence("Shift+Up"), QKeySequence("Backspace"), QKeySequence::Back}
+                                            : QList<QKeySequence>{QKeySequence("Left"), QKeySequence("Shift+Up"), QKeySequence("Backspace"), QKeySequence::Back});
+  };
+  connect(m_Viewport->animationPlayer(), &AnimationPlayer::availabilityChanged, this, updateNavigationKeys);
+  updateNavigationKeys(false);
 
   auto* helpMenu = menuBar()->addMenu("&Help");
   helpMenu->addAction("About shtetl", this, &MainWindow::showAboutDialog);
