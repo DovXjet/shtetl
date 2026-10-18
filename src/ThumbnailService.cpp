@@ -12,6 +12,7 @@
 #include <QFileInfo>
 #include <QStandardPaths>
 
+#include <chrono>
 #include <cmath>
 #include <cstring>
 #include <iostream>
@@ -68,8 +69,13 @@ void ThumbnailWorker::makeThumbnail(const QString& path, CancelFlag cancel, bool
     return;
   }
 
+  using Clock = std::chrono::steady_clock;
+  auto msSince = [](Clock::time_point t) { return int(std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - t).count()); };
+  const auto start = Clock::now();
   const QString cachePath = thumbnailPath(path);
   QImage image;
+  bool fromCache = true;
+  int loadMs = 0, renderMs = 0;
 
   // A cached thumbnail, unless the model changed since: ours, or else one
   // that XjetStudio made (".thumbnails/part.png" for part.stl) until it
@@ -82,17 +88,24 @@ void ThumbnailWorker::makeThumbnail(const QString& path, CancelFlag cancel, bool
   if (!force) loadIfFresh(cachePath);
   if (!force && image.isNull()) loadIfFresh(QFileInfo(cachePath).path() + "/" + modelInfo.completeBaseName() + ".png");
 
+  const int cacheMs = msSince(start);
   if (image.isNull())
   {
+    fromCache = false;
     try
     {
       {
+        const auto loadStart = Clock::now();
         const LoadedModel model = loadModel(path, m_Options, cancel.get(), thumbnailColor(path));
+        loadMs = msSince(loadStart);
         if (cancel && cancel->load()) return;
         // The PBR materials (glTF) are lit by the environment, as in the viewer
         // with the PBR shader: a metallic one has nothing else to show.
         const bool environmentLit = lightWithEnvironment(*model.node);
-        if (auto data = m_Renderer.render(model.node, model.bounds, environmentLit, &model.compact))
+        const auto renderStart = Clock::now();
+        auto data = m_Renderer.render(model.node, model.bounds, environmentLit, &model.compact);
+        renderMs = msSince(renderStart);
+        if (data)
         {
           // The renderer's RGBA8 rows, copied: the data is mapped GPU memory.
           image = thumbnailImage(*data, QSize(ThumbnailSize, ThumbnailSize));
@@ -109,6 +122,14 @@ void ThumbnailWorker::makeThumbnail(const QString& path, CancelFlag cancel, bool
       spdlog::error("Thumbnail of {} failed: {} (VkResult {})", path.toStdString(), e.message, e.result);
     }
   }
+  const int totalMs = msSince(start);
+  // Everything here runs on the worker thread, so a slow thumbnail must not
+  // be felt in the UI; the log says where the time went if it is.
+  if (totalMs >= 500)
+    spdlog::warn("Thumbnail of {} took {} ms (cache lookup {}, load {}, render {}, {})", path.toStdString(), totalMs, cacheMs, loadMs, renderMs,
+                 fromCache ? "from cache" : "made anew");
+  else
+    spdlog::debug("Thumbnail of {}: {} ms ({})", path.toStdString(), totalMs, fromCache ? "from cache" : "made anew");
   emit resultReady(path, image);
 }
 

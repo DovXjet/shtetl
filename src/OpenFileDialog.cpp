@@ -298,6 +298,12 @@ static constexpr int kPlacesSeparatorRole = Qt::UserRole + 100;
 // syncFoldersTreeToDirectory().
 static constexpr int kLiveFolderRole = Qt::UserRole + 101;
 static constexpr int kPopulatedRole = Qt::UserRole + 102;
+// The token of the directory listing a live-folder row waits for (0: none).
+static constexpr int kLoadTokenRole = Qt::UserRole + 103;
+static quint64 sLoadToken = 0;
+// While syncFoldersTreeToDirectory() expands rows it populates the one it
+// needs itself.
+static bool sSyncingTree = false;
 
 class PlacesItemDelegate : public QStyledItemDelegate
 {
@@ -598,22 +604,17 @@ void OpenFileDialog::populateDrives()
                 item->setData(d.rootPath, Qt::UserRole);
                 item->setData(true, kLiveFolderRole);
                 item->setToolTip(d.rootPath);
-                if (!liveSubdirectoryNames(d.rootPath).isEmpty())
-                {
-                    // Placeholder child so an expand arrow shows immediately
-                    // - populateLiveFolderChildren() replaces it with the
-                    // drive's real top-level subdirectories the first time
-                    // it's expanded (either by the user, or by
-                    // syncFoldersTreeToDirectory() below once it walks down
-                    // into this drive).
-                    auto* placeholder = new QStandardItem();
-                    placeholder->setFlags(Qt::NoItemFlags);
-                    item->appendRow(placeholder);
-                }
-                else
-                {
-                    item->setData(true, kPopulatedRole);
-                }
+                // Placeholder child so an expand arrow shows immediately
+                // - populateLiveFolderChildren() replaces it with the
+                // drive's real top-level subdirectories the first time
+                // it's expanded (either by the user, or by
+                // syncFoldersTreeToDirectory() below once it walks down
+                // into this drive). Whether the drive has any is not
+                // looked up here: listing a network drive blocks the UI
+                // thread for seconds.
+                auto* placeholder = new QStandardItem();
+                placeholder->setFlags(Qt::NoItemFlags);
+                item->appendRow(placeholder);
                 self->myComputerNode_->appendRow(item);
             }
             if (self->placesTree_) self->placesTree_->expand(self->myComputerNode_->index());
@@ -645,29 +646,49 @@ QStandardItem* OpenFileDialog::makeLiveFolderItem(const QString& path)
     item->setData(true, kLiveFolderRole);
     item->setToolTip(path);
 
-    if (!liveSubdirectoryNames(path).isEmpty())
-    {
-        auto* placeholder = new QStandardItem();
-        placeholder->setFlags(Qt::NoItemFlags);
-        item->appendRow(placeholder);
-    }
-    else
-    {
-        item->setData(true, kPopulatedRole); // no children to populate - nothing to expand
-    }
+    // Always a placeholder, so no directory is listed here: on a network drive
+    // each listing blocks the UI thread, and this runs for every child of the
+    // current directory. A folder without subdirectories loses its arrow when
+    // it is expanded and populateLiveFolderChildren() finds nothing.
+    auto* placeholder = new QStandardItem();
+    placeholder->setFlags(Qt::NoItemFlags);
+    item->appendRow(placeholder);
     return item;
 }
 
-// Replaces `item`'s placeholder child with its real subdirectory listing.
+// Replaces `item`'s placeholder child with its real subdirectory listing. The
+// listing is read on a background thread - on a network drive it takes
+// seconds, which must not block the UI - and the row is filled once it is
+// there, unless the row was rebuilt or removed in the meantime.
 void OpenFileDialog::populateLiveFolderChildren(QStandardItem* item)
 {
-    if (!item) return;
+    if (!item || !placesModel_) return;
     const QString path = item->data(Qt::UserRole).toString();
-    item->removeRows(0, item->rowCount());
+    const quint64 token = ++sLoadToken;
+    item->setData(token, kLoadTokenRole);
+    const QPersistentModelIndex index(item->index());
 
-    QDir dir(path);
-    for (const QString& name : liveSubdirectoryNames(path)) item->appendRow(makeLiveFolderItem(dir.filePath(name)));
-    item->setData(true, kPopulatedRole);
+    QPointer<OpenFileDialog> self(this);
+    std::thread([self, path, token, index]() {
+        QStringList names;
+        try
+        {
+            names = liveSubdirectoryNames(path);
+        }
+        catch (const std::exception&)
+        {
+        }
+        QMetaObject::invokeMethod(qApp, [self, path, token, index, names]() {
+            if (!self || !self->placesModel_ || !index.isValid()) return;
+            QStandardItem* item = self->placesModel_->itemFromIndex(index);
+            if (!item || item->data(kLoadTokenRole).toULongLong() != token) return;
+            item->removeRows(0, item->rowCount());
+            QDir dir(path);
+            for (const QString& name : names) item->appendRow(self->makeLiveFolderItem(dir.filePath(name)));
+            item->setData(true, kPopulatedRole);
+            item->setData(0, kLoadTokenRole);
+        });
+    }).detach();
 }
 
 // Populates a live-folder row's real children the first time the user
@@ -677,7 +698,8 @@ void OpenFileDialog::onPlacesTreeExpanded(const QModelIndex& index)
 {
     if (!placesModel_) return;
     QStandardItem* item = placesModel_->itemFromIndex(index);
-    if (item && item->data(kLiveFolderRole).toBool() && !item->data(kPopulatedRole).toBool())
+    if (!sSyncingTree && item && item->data(kLiveFolderRole).toBool() && !item->data(kPopulatedRole).toBool() &&
+        !item->data(kLoadTokenRole).toULongLong())
         populateLiveFolderChildren(item);
 }
 
@@ -706,7 +728,9 @@ void OpenFileDialog::syncFoldersTreeToDirectory(const QString& path)
         auto* candidate = myComputerNode_->child(row);
         const QString candidatePath = QDir::cleanPath(candidate->data(Qt::UserRole).toString());
         if (candidatePath.isEmpty()) continue;
-        if ((target == candidatePath || target.startsWith(candidatePath + '/')) && candidatePath.length() > currentPath.length())
+        // A drive root ("Z:/", "/") already ends in a slash after cleanPath().
+        const QString prefix = candidatePath.endsWith('/') ? candidatePath : candidatePath + '/';
+        if ((target == candidatePath || target.startsWith(prefix)) && candidatePath.length() > currentPath.length())
         {
             current = candidate;
             currentPath = candidatePath;
@@ -714,14 +738,20 @@ void OpenFileDialog::syncFoldersTreeToDirectory(const QString& path)
     }
     if (!current) return; // drives not populated yet - populateDrives() retries this once they are
 
+    struct SyncGuard
+    {
+        SyncGuard() { sSyncingTree = true; }
+        ~SyncGuard() { sSyncingTree = false; }
+    } syncGuard;
     placesTree_->expand(current->index());
 
     const QStringList components = QDir::cleanPath(target.mid(currentPath.length())).split('/', Qt::SkipEmptyParts);
     for (const QString& component : components)
     {
-        currentPath = (currentPath == "/") ? '/' + component : currentPath + '/' + component;
+        currentPath = currentPath.endsWith('/') ? currentPath + component : currentPath + '/' + component;
 
         current->removeRows(0, current->rowCount());
+        current->setData(0, kLoadTokenRole); // a listing on its way would replace this chain
         auto* child = makeLiveFolderItem(currentPath);
         current->appendRow(child);
         current->setData(false, kPopulatedRole);
@@ -730,7 +760,7 @@ void OpenFileDialog::syncFoldersTreeToDirectory(const QString& path)
         placesTree_->expand(current->index());
     }
 
-    if (!current->data(kPopulatedRole).toBool()) populateLiveFolderChildren(current);
+    if (!current->data(kPopulatedRole).toBool() && !current->data(kLoadTokenRole).toULongLong()) populateLiveFolderChildren(current);
     placesTree_->expand(current->index());
     placesTree_->setCurrentIndex(current->index());
 
