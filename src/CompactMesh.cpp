@@ -9,6 +9,8 @@
 
 #include <vsg/animation/FindAnimations.h>
 #include <vsg/io/read.h>
+#include <vsg/state/DescriptorSet.h>
+#include <vsg/state/GraphicsPipeline.h>
 #include <vsg/utils/ComputeBounds.h>
 
 #include "Logging.h"
@@ -26,6 +28,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <string_view>
+#include <set>
 #include <unordered_set>
 
 // 12 byte encoding of each vertex (as in XjetStudio)
@@ -346,6 +349,50 @@ namespace
     return vsg::read_cast<vsg::Node>(stream, local);
   }
 
+  // vsgXchange's glTF reader adds the joint matrices of a skin to the descriptor
+  // set layout of its shader set once per skinned mesh, and the shader set is
+  // shared, so the layout - and the descriptor sets made with it - end up with
+  // the same binding several times, not matching the sets made before the
+  // layout grew ("setLayout bindings size (5) and descriptors size 4 not
+  // equal"), and the model can not be compiled. Keeps the first of the bindings,
+  // and of the descriptors, that have the same number.
+  void removeDuplicateLayoutBindings(vsg::Node& root)
+  {
+    struct Fixer : vsg::Visitor
+    {
+      std::unordered_set<const vsg::Object*> visited;
+
+      static void dedupe(vsg::DescriptorSetLayout* layout)
+      {
+        if (!layout) return;
+        std::set<uint32_t> seen;
+        auto& bindings = layout->bindings;
+        bindings.erase(std::remove_if(bindings.begin(), bindings.end(), [&seen](const VkDescriptorSetLayoutBinding& b) { return !seen.insert(b.binding).second; }),
+                       bindings.end());
+      }
+      void apply(vsg::Object& o) override
+      {
+        if (visited.insert(&o).second) o.traverse(*this);
+      }
+      void apply(vsg::DescriptorSet& ds) override
+      {
+        if (!visited.insert(&ds).second) return;
+        dedupe(ds.setLayout);
+        std::set<uint32_t> seen;
+        auto& descriptors = ds.descriptors;
+        descriptors.erase(std::remove_if(descriptors.begin(), descriptors.end(), [&seen](const vsg::ref_ptr<vsg::Descriptor>& d) { return d && !seen.insert(d->dstBinding).second; }),
+                          descriptors.end());
+      }
+      void apply(vsg::BindGraphicsPipeline& bind) override
+      {
+        if (!visited.insert(&bind).second) return;
+        if (bind.pipeline && bind.pipeline->layout)
+          for (auto& layout : bind.pipeline->layout->setLayouts) dedupe(layout);
+      }
+    } fixer;
+    root.accept(fixer);
+  }
+
   // Looks for a node that is its own ancestor. ComputeBounds and other
   // visitors recurse forever (stack overflow) on such a graph.
   bool findCycle(vsg::Object& object, std::unordered_set<const vsg::Object*>& path, std::unordered_set<const vsg::Object*>& done, std::string& where)
@@ -422,6 +469,7 @@ LoadedModel loadModel(const QString& path, vsg::ref_ptr<vsg::Options> options, c
     }
   }
 
+  removeDuplicateLayoutBindings(*node);
   addEnvironmentLighting(node);
   spdlog::info("loadModel: environment lighting done, computing bounds");
   spdlog::default_logger()->flush();
