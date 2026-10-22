@@ -593,15 +593,6 @@ bool Viewport3D::eventFilter(QObject* watched, QEvent* event)
       if (!keyEvent->isAutoRepeat()) emit stepRequested(keyEvent->key() == Qt::Key_Right ? +1 : -1);
       return true;
     }
-    // Typing anywhere finds a file by name, as in a file manager; the view's
-    // own commands are on Ctrl (or Numpad / Home / End / PgDn) keys.
-    const bool command = keyEvent->modifiers() & (Qt::ControlModifier | Qt::AltModifier | Qt::MetaModifier);
-    const QString text = keyEvent->text();
-    if (!command && !text.isEmpty() && text.at(0).isPrint() && !(keyEvent->modifiers() & Qt::KeypadModifier) && keyEvent->key() != Qt::Key_Space)
-    {
-      emit typeAheadKey(text);
-      return true;
-    }
   }
   return QWidget::eventFilter(watched, event);
 }

@@ -155,9 +155,6 @@ class Viewport3D : public QWidget
     void contextMenuRequested(const QPoint& globalPos);
     // Left / Right (+1 / -1 for next / previous) were pressed in the view.
     void stepRequested(int delta);
-    // A plain typed character (no Ctrl / Alt) was pressed in the view; it is
-    // for the file search of the thumbnails, not a command.
-    void typeAheadKey(const QString& text);
 
   private:
     bool eventFilter(QObject* watched, QEvent* event) override;

@@ -21,7 +21,11 @@
 #include <QDockWidget>
 #include <QFileDialog>
 #include <QFileInfo>
+#include <QAbstractSpinBox>
+#include <QKeyEvent>
 #include <QLabel>
+#include <QLineEdit>
+#include <QTextEdit>
 #include <QLocale>
 #include <QPixmap>
 #include <QProgressBar>
@@ -77,7 +81,6 @@ MainWindow::MainWindow()
   connect(m_Browser, &ThumbnailBrowser::fileSelected, this, &MainWindow::loadModel);
 
   // Right-click in the 3D view: the Edit > Copy action (set up in createMenus()).
-  connect(m_Viewport, &Viewport3D::typeAheadKey, m_Browser, &ThumbnailBrowser::typeAhead);
   connect(m_Viewport, &Viewport3D::stepRequested, this, &MainWindow::goAdjacent);
   connect(m_Viewport, &Viewport3D::contextMenuRequested, this, [this](const QPoint& pos) {
     QMenu menu(this);
@@ -167,6 +170,21 @@ void MainWindow::closeEvent(QCloseEvent* event)
 bool MainWindow::eventFilter(QObject* watched, QEvent* event)
 {
   const auto type = event->type();
+  // Typing finds a file by name, whichever widget (or the 3D view) the focus
+  // is on, e.g. after the settings window was closed. Text fields keep their keys.
+  if (type == QEvent::KeyPress && QApplication::activeWindow() == this && !QApplication::activePopupWidget())
+  {
+    const auto* key = static_cast<QKeyEvent*>(event);
+    const bool command = key->modifiers() & (Qt::ControlModifier | Qt::AltModifier | Qt::MetaModifier | Qt::KeypadModifier);
+    const QString text = key->text();
+    const QWidget* focus = QApplication::focusWidget();
+    const bool textInput = qobject_cast<const QLineEdit*>(focus) || qobject_cast<const QAbstractSpinBox*>(focus) || qobject_cast<const QTextEdit*>(focus);
+    if (!command && !textInput && !text.isEmpty() && text.at(0).isPrint() && key->key() != Qt::Key_Space)
+    {
+      m_Browser->typeAhead(text);
+      return true;
+    }
+  }
   if ((type == QEvent::MouseButtonPress || type == QEvent::MouseButtonRelease || type == QEvent::MouseButtonDblClick) && QApplication::activeWindow() == this)
   {
     const Qt::MouseButton button = static_cast<QMouseEvent*>(event)->button();
