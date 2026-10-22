@@ -177,6 +177,13 @@ bool MainWindow::eventFilter(QObject* watched, QEvent* event)
   {
     const auto* key = static_cast<QKeyEvent*>(event);
     const bool command = key->modifiers() & (Qt::ControlModifier | Qt::AltModifier | Qt::MetaModifier | Qt::KeypadModifier);
+    // Numpad 5 flips the projection whichever widget has the focus; the 3D
+    // view handles its own keys.
+    if ((key->modifiers() & Qt::KeypadModifier) && (key->key() == Qt::Key_5 || key->key() == Qt::Key_Clear) && !qobject_cast<const QLineEdit*>(QApplication::focusWidget()) && watched->isWidgetType())
+    {
+      if (!key->isAutoRepeat()) m_Viewport->toggleProjection();
+      return true;
+    }
     const QString text = key->text();
     const QWidget* focus = QApplication::focusWidget();
     // An editable combo box is its own focus widget (its line edit is only a proxy).
