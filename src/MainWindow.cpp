@@ -22,6 +22,7 @@
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QAbstractSpinBox>
+#include <QComboBox>
 #include <QKeyEvent>
 #include <QLabel>
 #include <QLineEdit>
@@ -178,7 +179,9 @@ bool MainWindow::eventFilter(QObject* watched, QEvent* event)
     const bool command = key->modifiers() & (Qt::ControlModifier | Qt::AltModifier | Qt::MetaModifier | Qt::KeypadModifier);
     const QString text = key->text();
     const QWidget* focus = QApplication::focusWidget();
-    const bool textInput = qobject_cast<const QLineEdit*>(focus) || qobject_cast<const QAbstractSpinBox*>(focus) || qobject_cast<const QTextEdit*>(focus);
+    // An editable combo box is its own focus widget (its line edit is only a proxy).
+    const auto* combo = qobject_cast<const QComboBox*>(focus);
+    const bool textInput = qobject_cast<const QLineEdit*>(focus) || qobject_cast<const QAbstractSpinBox*>(focus) || qobject_cast<const QTextEdit*>(focus) || (combo && combo->isEditable());
     if (!command && !textInput && !text.isEmpty() && text.at(0).isPrint() && key->key() != Qt::Key_Space)
     {
       m_Browser->typeAhead(text);
