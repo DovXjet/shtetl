@@ -38,14 +38,40 @@ class CToggleProjection : public vsg::Inherit<vsg::ProjectionMatrix, CToggleProj
 
     vsg::dmat4 transform() const override
     {
-        if (!orthographic) return vsg::perspective(vsg::radians(fieldOfViewY), aspectRatio, nearDistance, farDistance);
+        double nearD = nearDistance, farD = farDistance;
+        if (bounds.valid())
+        {
+            // Near/far are the model's depth range along the view direction,
+            // so no zoom distance can clip it.
+            vsg::dvec3 dir = vsg::normalize(m_LookAt->center - m_LookAt->eye);
+            double zMin = 1e300, zMax = -1e300;
+            for (int i = 0; i < 8; ++i)
+            {
+                vsg::dvec3 corner((i & 1) ? bounds.max.x : bounds.min.x, (i & 2) ? bounds.max.y : bounds.min.y, (i & 4) ? bounds.max.z : bounds.min.z);
+                double d = vsg::dot(corner - m_LookAt->eye, dir);
+                zMin = std::min(zMin, d);
+                zMax = std::max(zMax, d);
+            }
+            double pad = std::max((zMax - zMin) * 0.01, 1e-6);
+            farD = zMax + pad;
+            nearD = zMin - pad;
+        }
+        if (!orthographic)
+        {
+            // A perspective near plane must be positive; keep the ratio sane for depth precision.
+            farD = std::max(farD, 1e-3);
+            nearD = std::max(nearD, farD * 1e-4);
+            return vsg::perspective(vsg::radians(fieldOfViewY), aspectRatio, nearD, farD);
+        }
         double halfH = vsg::length(m_LookAt->eye - m_LookAt->center) * std::tan(vsg::radians(fieldOfViewY) * 0.5);
         double halfW = halfH * aspectRatio;
-        // Negative near plane so zooming in past the model doesn't clip it.
-        return vsg::orthographic(-halfW, halfW, -halfH, halfH, -farDistance, farDistance);
+        // Without bounds, a negative near plane keeps zooming in past the model from clipping it.
+        if (!bounds.valid()) nearD = -farD;
+        return vsg::orthographic(-halfW, halfW, -halfH, halfH, nearD, farD);
     }
 
     bool orthographic = false;
+    vsg::dbox bounds; // the model being viewed; invalid = use nearDistance/farDistance
     double fieldOfViewY, aspectRatio, nearDistance, farDistance;
 
   private:

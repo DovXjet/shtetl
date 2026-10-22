@@ -438,6 +438,7 @@ void Viewport3D::buildSceneGraph()
   double aspect = extent.height > 0 ? static_cast<double>(extent.width) / static_cast<double>(extent.height) : 1.0;
   m_Projection = CToggleProjection::create(lookAt, 30.0, aspect, radius * 0.01, radius * 10.0);
   m_Projection->orthographic = m_Orthographic;
+  if (m_Model) m_Projection->bounds = m_ModelBounds;
   m_Camera = vsg::Camera::create(m_Projection, lookAt, vsg::ViewportState::create(extent));
 
   applyEdgeWidth();

@@ -13,6 +13,7 @@
 
 #include <QGuiApplication>
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <functional>
@@ -197,6 +198,7 @@ class MyTrackball : public vsg::Inherit<vsg::Trackball, MyTrackball>
     // before arming the animation so it always starts from "now".
     void setViewpoint(vsg::ref_ptr<vsg::LookAt> lookAt, double duration = 1.0)
     {
+        _zoomActive = false;
         _previousTime = vsg::clock::now();
         vsg::Inherit<vsg::Trackball, MyTrackball>::setViewpoint(lookAt, duration);
     }
@@ -215,7 +217,29 @@ class MyTrackball : public vsg::Inherit<vsg::Trackball, MyTrackball>
     {
         vsg::Inherit<vsg::Trackball, MyTrackball>::apply(frame);
 
-        if (isAnimatingViewpoint() && m_RedrawRequestCallback) m_RedrawRequestCallback();
+        advanceZoom();
+
+        if ((isAnimatingViewpoint() || _zoomActive) && m_RedrawRequestCallback) m_RedrawRequestCallback();
+    }
+
+    // Wheel zoom as a short eased motion (profile copied from vgiv's
+    // PanZoomHandler): one notch is the base class's 10% step, shift makes
+    // it 5x. A notch arriving mid-motion starts a new motion from the
+    // present view to the previous destination zoomed once more.
+    void apply(vsg::ScrollWheelEvent& scrollWheel) override
+    {
+        if (scrollWheel.handled || !eventRelevant(scrollWheel) || !_lastPointerEventWithinRenderArea) return;
+        scrollWheel.handled = true;
+
+        double amount = scrollWheel.delta.y;
+        if (amount == 0.0) return;
+        double factor = std::pow(0.9, amount * (QGuiApplication::keyboardModifiers() & Qt::ShiftModifier ? 5.0 : 1.0));
+
+        _zoomTotal = (_zoomActive ? _zoomTotal / _zoomApplied : 1.0) * factor;
+        _zoomApplied = 1.0;
+        _zoomStart = std::chrono::steady_clock::now();
+        _zoomActive = true;
+        if (m_RedrawRequestCallback) m_RedrawRequestCallback();
     }
 
     std::set<uint32_t> zoomButtonMasks;
@@ -234,6 +258,38 @@ class MyTrackball : public vsg::Inherit<vsg::Trackball, MyTrackball>
         if (modifiers & Qt::AltModifier) result |= vsg::MODKEY_Alt;
         return result;
     }
+
+    // Trapezoidal-velocity ease: accelerate over the first quarter, cruise,
+    // decelerate over the last quarter. u and result are in [0,1].
+    static double zoomProfile(double u)
+    {
+        constexpr double a = 0.25;
+        constexpr double v = 1.0 / (1.0 - a);
+        if (u <= 0.0) return 0.0;
+        if (u >= 1.0) return 1.0;
+        if (u < a) return v * u * u / (2.0 * a);
+        if (u > 1.0 - a) return 1.0 - v * (1.0 - u) * (1.0 - u) / (2.0 * a);
+        return v * (0.5 * a + (u - a));
+    }
+
+    void advanceZoom()
+    {
+        if (!_zoomActive) return;
+        const double elapsed = std::chrono::duration<double>(std::chrono::steady_clock::now() - _zoomStart).count();
+        const double u = std::min(elapsed / kZoomDuration, 1.0);
+        const double wanted = std::pow(_zoomTotal, zoomProfile(u));
+        // The base zoom(r) scales the eye distance by (1 - r).
+        zoom(1.0 - wanted / _zoomApplied);
+        _zoomApplied = wanted;
+        if (u >= 1.0) _zoomActive = false;
+    }
+
+    static constexpr double kZoomDuration = 0.25; // seconds
+
+    bool _zoomActive = false;
+    double _zoomTotal = 1.0;   // distance factor of the whole motion
+    double _zoomApplied = 1.0; // part of it already applied
+    std::chrono::steady_clock::time_point _zoomStart;
 
     std::function<void()> m_RedrawRequestCallback;
 
