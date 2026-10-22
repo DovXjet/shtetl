@@ -60,6 +60,7 @@ if there is no thumbnail of ours.
 | Ctrl+Shift+P / Ctrl+Shift+A | PBR shader / ambient occlusion |
 | Ctrl+E / Ctrl+Shift+E / Ctrl+Shift+W | Sharp edges / all edges / wireframe |
 | Left / Right | Previous / next model (in the 3D view; in the thumbnails they move the selection) |
+| Ctrl+wheel, Ctrl++ / Ctrl+- (in the thumbnails) | Larger / smaller thumbnails (also the magnifier buttons) |
 | Ctrl+M | Show or hide the menu bar |
 | F9 | Show or hide the thumbnail dock |
 | Ctrl+Q | Quit |

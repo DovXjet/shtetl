@@ -8,7 +8,9 @@
 #include <QFileInfo>
 #include <QMenu>
 #include <QHBoxLayout>
+#include <QComboBox>
 #include <QLineEdit>
+#include <QShortcut>
 #include <QKeyEvent>
 #include <QListView>
 #include <QMimeData>
@@ -20,7 +22,6 @@
 #include <QWheelEvent>
 #include <QSettings>
 #include <QSignalBlocker>
-#include <QSlider>
 #include <QStandardItemModel>
 #include <QToolButton>
 #include <QUrl>
@@ -68,14 +69,31 @@ ThumbnailBrowser::ThumbnailBrowser(ThumbnailService* service, QWidget* parent) :
   m_UpButton = new QToolButton(this);
   m_UpButton->setText("↑");
   m_UpButton->setToolTip("Parent directory");
-  m_PathEdit = new QLineEdit(this);
-  m_SizeSlider = new QSlider(Qt::Horizontal, this);
-  m_SizeSlider->setRange(64, ThumbnailPixels);
-  m_SizeSlider->setFixedWidth(90);
-  m_SizeSlider->setToolTip("Thumbnail size");
+  m_BackButton = new QToolButton(this);
+  m_BackButton->setText("←");
+  m_BackButton->setToolTip("Back to the previous directory");
+  m_ForwardButton = new QToolButton(this);
+  m_ForwardButton->setText("→");
+  m_ForwardButton->setToolTip("Forward to the next directory");
+  m_PathCombo = new QComboBox(this);
+  m_PathCombo->setEditable(true);
+  m_PathCombo->setInsertPolicy(QComboBox::NoInsert);
+  m_PathCombo->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
+  m_PathCombo->setMinimumContentsLength(8);
+  m_PathCombo->setToolTip("The directory: type a path, or choose a parent, the home directory or a recent one");
+  m_SmallerButton = new QToolButton(this);
+  m_SmallerButton->setIcon(magnifierIcon(false));
+  m_SmallerButton->setToolTip("Smaller thumbnails (Ctrl+-)");
+  m_LargerButton = new QToolButton(this);
+  m_LargerButton->setIcon(magnifierIcon(true));
+  m_LargerButton->setToolTip("Larger thumbnails (Ctrl++)");
+  bar->setSpacing(2);
+  bar->addWidget(m_BackButton);
+  bar->addWidget(m_ForwardButton);
   bar->addWidget(m_UpButton);
-  bar->addWidget(m_PathEdit, 1);
-  bar->addWidget(m_SizeSlider);
+  bar->addWidget(m_PathCombo, 1);
+  bar->addWidget(m_SmallerButton);
+  bar->addWidget(m_LargerButton);
   layout->addLayout(bar);
 
   m_Model = new FileDragModel(this);
@@ -123,18 +141,31 @@ ThumbnailBrowser::ThumbnailBrowser(ThumbnailService* service, QWidget* parent) :
     QDir dir(m_Directory);
     if (dir.cdUp()) setDirectory(dir.absolutePath());
   });
-  connect(m_PathEdit, &QLineEdit::returnPressed, this, [this]() {
-    if (QDir(m_PathEdit->text()).exists()) setDirectory(m_PathEdit->text());
-    else m_PathEdit->setText(m_Directory);
+  connect(m_BackButton, &QToolButton::clicked, this, [this]() { goHistory(-1); });
+  connect(m_ForwardButton, &QToolButton::clicked, this, [this]() { goHistory(+1); });
+  connect(m_PathCombo->lineEdit(), &QLineEdit::returnPressed, this, [this]() {
+    if (QDir(m_PathCombo->currentText()).exists()) setDirectory(m_PathCombo->currentText());
+    else m_PathCombo->setEditText(m_Directory);
   });
-  connect(m_SizeSlider, &QSlider::valueChanged, this, &ThumbnailBrowser::setIconSize);
+  connect(m_PathCombo, &QComboBox::activated, this, [this](int index) {
+    const QString path = m_PathCombo->itemData(index).toString();
+    if (!path.isEmpty()) setDirectory(path);
+  });
+  connect(m_SmallerButton, &QToolButton::clicked, this, [this]() { stepIconSize(-1); });
+  connect(m_LargerButton, &QToolButton::clicked, this, [this]() { stepIconSize(+1); });
+  // The shortcuts of the list only, so that they do not take the keys of the 3D view.
+  for (const auto& [key, delta] : {std::pair{"Ctrl++", +1}, {"Ctrl+=", +1}, {"Ctrl+-", -1}})
+  {
+    auto* shortcut = new QShortcut(QKeySequence(key), this);
+    shortcut->setContext(Qt::WidgetWithChildrenShortcut);
+    connect(shortcut, &QShortcut::activated, this, [this, delta]() { stepIconSize(delta); });
+  }
   connect(m_View, &QListView::activated, this, &ThumbnailBrowser::onActivated);
   connect(m_View->selectionModel(), &QItemSelectionModel::currentChanged, this,
           [this](const QModelIndex& current) { onCurrentChanged(current); });
   connect(m_Service, &ThumbnailService::thumbnailReady, this, &ThumbnailBrowser::onThumbnailReady);
 
   setIconSize(QSettings().value("Browser/ThumbnailSize", 128).toInt());
-  m_SizeSlider->setValue(m_View->iconSize().width());
 }
 
 ThumbnailBrowser::~ThumbnailBrowser()
@@ -163,6 +194,11 @@ bool ThumbnailBrowser::eventFilter(QObject* watched, QEvent* event)
   if (watched == m_View->viewport() && event->type() == QEvent::Wheel)
   {
     auto* wheel = static_cast<QWheelEvent*>(event);
+    if ((wheel->modifiers() & Qt::ControlModifier) && wheel->angleDelta().y() != 0)
+    {
+      stepIconSize(wheel->angleDelta().y() > 0 ? +1 : -1);
+      return true;
+    }
     // Handled even when the event carries a pixelDelta: many mice report one (libinput),
     // and Qt's default would then scroll by hundreds of pixels per notch.
     if (wheel->angleDelta().y() != 0 && !(wheel->modifiers() & Qt::ControlModifier))
@@ -193,8 +229,43 @@ void ThumbnailBrowser::typeAhead(const QString& text)
   m_View->keyboardSearch(text);
 }
 
+namespace
+{
+  constexpr int IconSizes[] = {64, 96, 128, 160, 192, 256};
+}
+
+void ThumbnailBrowser::stepIconSize(int delta)
+{
+  // From the nearest step, as the stored size may be any (it was a slider's).
+  int nearest = 0;
+  for (int i = 0; i < int(std::size(IconSizes)); ++i)
+    if (qAbs(IconSizes[i] - m_View->iconSize().width()) < qAbs(IconSizes[nearest] - m_View->iconSize().width())) nearest = i;
+  setIconSize(IconSizes[qBound(0, nearest + delta, int(std::size(IconSizes)) - 1)]);
+}
+
+// A magnifying glass with a minus or a plus, in the text color.
+QIcon ThumbnailBrowser::magnifierIcon(bool plus) const
+{
+  QPixmap pixmap(64, 64);
+  pixmap.fill(Qt::transparent);
+  QPainter painter(&pixmap);
+  painter.setRenderHint(QPainter::Antialiasing);
+  QPen pen(palette().color(QPalette::ButtonText), 6, Qt::SolidLine, Qt::RoundCap);
+  painter.setPen(pen);
+  painter.drawEllipse(QPointF(26, 26), 18, 18);
+  painter.drawLine(QPointF(39, 39), QPointF(57, 57));
+  pen.setWidth(5);
+  painter.setPen(pen);
+  painter.drawLine(QPointF(17, 26), QPointF(35, 26));
+  if (plus) painter.drawLine(QPointF(26, 17), QPointF(26, 35));
+  return QIcon(pixmap);
+}
+
 void ThumbnailBrowser::setIconSize(int size)
 {
+  size = qBound(IconSizes[0], size, int(ThumbnailPixels));
+  m_SmallerButton->setEnabled(size > IconSizes[0]);
+  m_LargerButton->setEnabled(size < ThumbnailPixels);
   m_View->setIconSize(QSize(size, size));
   m_View->setGridSize(QSize(size + 24, size + 48));
   QSettings().setValue("Browser/ThumbnailSize", size);
@@ -239,13 +310,68 @@ QIcon ThumbnailBrowser::folderIcon() const
   return QIcon(pixmap);
 }
 
+void ThumbnailBrowser::goHistory(int delta)
+{
+  const int pos = m_HistoryPos + delta;
+  if (pos < 0 || pos >= m_History.size()) return;
+  m_HistoryPos = pos;
+  m_InHistory = true;
+  setDirectory(m_History[pos]);
+  m_InHistory = false;
+}
+
+void ThumbnailBrowser::updateNavigation()
+{
+  m_BackButton->setEnabled(m_HistoryPos > 0);
+  m_ForwardButton->setEnabled(m_HistoryPos >= 0 && m_HistoryPos + 1 < m_History.size());
+}
+
+// The list of the combo box: the directory and its parents, the home directory,
+// and the directories visited lately.
+void ThumbnailBrowser::fillDirectoryChoices()
+{
+  const QSignalBlocker blocker(m_PathCombo);
+  m_PathCombo->clear();
+  QStringList shown;
+  auto add = [&](const QString& path) {
+    if (path.isEmpty() || shown.contains(path) || !QDir(path).exists()) return;
+    shown << path;
+    m_PathCombo->addItem(QDir::toNativeSeparators(path), path);
+  };
+  for (QDir dir(m_Directory);; )
+  {
+    add(dir.absolutePath());
+    if (!dir.cdUp()) break;
+  }
+  m_PathCombo->insertSeparator(m_PathCombo->count());
+  add(QDir::homePath());
+  for (const QString& path : QSettings().value("Browser/RecentDirs").toStringList()) add(path);
+  m_PathCombo->setCurrentIndex(0);
+  m_PathCombo->setEditText(m_Directory);
+}
+
 void ThumbnailBrowser::setDirectory(const QString& path)
 {
   const QDir dir(path);
   if (!dir.exists()) return;
   m_Directory = dir.absolutePath();
-  m_PathEdit->setText(m_Directory);
   m_UpButton->setEnabled(!dir.isRoot());
+  if (!m_InHistory && (m_HistoryPos < 0 || m_History[m_HistoryPos] != m_Directory))
+  {
+    m_History = m_History.mid(0, m_HistoryPos + 1); // a new place drops the forward ones
+    m_History << m_Directory;
+    m_HistoryPos = m_History.size() - 1;
+  }
+  {
+    QSettings settings;
+    QStringList recent = settings.value("Browser/RecentDirs").toStringList();
+    recent.removeAll(m_Directory);
+    recent.prepend(m_Directory);
+    while (recent.size() > 10) recent.removeLast();
+    settings.setValue("Browser/RecentDirs", recent);
+  }
+  fillDirectoryChoices();
+  updateNavigation();
 
   // Thumbnails still queued for the previous directory are not wanted.
   if (m_Cancel) m_Cancel->store(true);

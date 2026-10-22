@@ -5,10 +5,9 @@
 #include <QHash>
 #include <QWidget>
 
-class QLineEdit;
+class QComboBox;
 class QListView;
 class QPropertyAnimation;
-class QSlider;
 class QStandardItem;
 class QStandardItemModel;
 class QToolButton;
@@ -71,15 +70,28 @@ class ThumbnailBrowser : public QWidget
     // Makes the thumbnail of a file anew, ignoring the cached one.
     void refreshThumbnail(const QString& path);
     void setIconSize(int size);
+    // One step up (+1) or down (-1) the sizes the thumbnails come in.
+    void stepIconSize(int delta);
+    // Back / forward through the directories visited.
+    void goHistory(int delta);
+    void updateNavigation();
+    void fillDirectoryChoices();
+    QIcon magnifierIcon(bool plus) const;
     QIcon placeholderIcon(const QString& text) const;
     QIcon folderIcon() const;
 
     ThumbnailService* m_Service;
     QString m_Directory;
     CancelFlag m_Cancel;
+    QToolButton* m_BackButton = nullptr;
+    QToolButton* m_ForwardButton = nullptr;
     QToolButton* m_UpButton = nullptr;
-    QLineEdit* m_PathEdit = nullptr;
-    QSlider* m_SizeSlider = nullptr;
+    QComboBox* m_PathCombo = nullptr; // the directory: editable, and its list jumps to others
+    QToolButton* m_SmallerButton = nullptr;
+    QToolButton* m_LargerButton = nullptr;
+    QStringList m_History;     // directories visited, oldest first
+    int m_HistoryPos = -1;     // the current one in m_History
+    bool m_InHistory = false;  // setDirectory() is a step through the history
     QListView* m_View = nullptr;
     QTimer* m_ScrollTimer = nullptr;   // drives the spring below
     double m_ScrollPos = 0, m_ScrollVel = 0, m_ScrollTarget = 0;
