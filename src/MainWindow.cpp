@@ -77,6 +77,8 @@ MainWindow::MainWindow()
   connect(m_Browser, &ThumbnailBrowser::fileSelected, this, &MainWindow::loadModel);
 
   // Right-click in the 3D view: the Edit > Copy action (set up in createMenus()).
+  connect(m_Viewport, &Viewport3D::typeAheadKey, m_Browser, &ThumbnailBrowser::typeAhead);
+  connect(m_Viewport, &Viewport3D::stepRequested, this, &MainWindow::goAdjacent);
   connect(m_Viewport, &Viewport3D::contextMenuRequested, this, [this](const QPoint& pos) {
     QMenu menu(this);
     menu.addAction(m_CopyAction);
@@ -122,6 +124,13 @@ MainWindow::MainWindow()
   statusBar()->showMessage("Open a model or a directory");
 
   showDirectory(settings.value("lastDirectory", QDir::homePath()).toString());
+
+  // The keyboard starts in the thumbnails; typing there finds a file, and the
+  // commands work from the 3D view as well (see Viewport3D::eventFilter()).
+  QTimer::singleShot(0, this, [this]() {
+    if (m_BrowserDock->isVisible()) m_Browser->focusList();
+    else m_Viewport->focusView();
+  });
 }
 
 MainWindow::~MainWindow()
@@ -186,7 +195,7 @@ void MainWindow::createMenus()
   fileMenu->addAction("&Preferences...", this, &MainWindow::showPreferences);
   fileMenu->addSeparator();
   auto* quit = fileMenu->addAction("&Quit", qApp, &QApplication::quit);
-  quit->setShortcuts({QKeySequence::Quit, QKeySequence("Q")});
+  quit->setShortcut(QKeySequence::Quit);
 
   // Copy puts the model file on the system clipboard, as a file manager does,
   // so that it can be pasted into XjetStudio (as a part), a file manager, ...
@@ -222,7 +231,7 @@ void MainWindow::createMenus()
   viewMenu->addAction(dockAction);
   auto* occlusion = viewMenu->addAction("&Ambient Occlusion");
   occlusion->setCheckable(true);
-  occlusion->setShortcut(QKeySequence("A"));
+  occlusion->setShortcut(QKeySequence("Ctrl+Shift+A"));
   occlusion->setStatusTip("Darken the creases of STL and 3MF models");
   addAction(occlusion);
   connect(occlusion, &QAction::toggled, this, [this](bool on) {
@@ -270,7 +279,7 @@ void MainWindow::createMenus()
   // The same switch as in the settings window.
   auto* usePbr = viewMenu->addAction("Use &PBR Shader");
   usePbr->setCheckable(true);
-  usePbr->setShortcut(QKeySequence("P"));
+  usePbr->setShortcut(QKeySequence("Ctrl+Shift+P"));
   usePbr->setStatusTip("Draw with the physically based shader and its studio environment (metallic and roughness are set in Scene Settings)");
   addAction(usePbr);
   usePbr->setChecked(m_SceneSettings->usePbr());
@@ -334,8 +343,8 @@ void MainWindow::createMenus()
   if (initialEdges == EdgeMode::Off) edgeActions.front().second->setChecked(true);
   m_Viewport->setEdgeMode(initialEdges);
   showEdgesLabel(initialEdges);
-  // E and Shift+E switch the sharp / all edges on, and either turns whatever is
-  // on off (the wireframe included); W switches the wireframe on and off.
+  // Ctrl+E and Ctrl+Shift+E switch the sharp / all edges on, and either turns whatever is
+  // on off (the wireframe included); Ctrl+Shift+W switches the wireframe on and off.
   edgesMenu->addSeparator();
   auto addEdgeToggle = [this, edgesMenu, edgeActions](const QString& text, const QString& key, EdgeMode on, bool anyEdgesOff) {
     auto* toggle = edgesMenu->addAction(text);
@@ -349,9 +358,9 @@ void MainWindow::createMenus()
         if (mode == target) action->trigger();
     });
   };
-  addEdgeToggle("Toggle Sharp Edges", "E", EdgeMode::Sharp, true);
-  addEdgeToggle("Toggle All Edges", "Shift+E", EdgeMode::All, true);
-  addEdgeToggle("Toggle Wireframe", "W", EdgeMode::Wireframe, false);
+  addEdgeToggle("Toggle Sharp Edges", "Ctrl+E", EdgeMode::Sharp, true);
+  addEdgeToggle("Toggle All Edges", "Ctrl+Shift+E", EdgeMode::All, true);
+  addEdgeToggle("Toggle Wireframe", "Ctrl+Shift+W", EdgeMode::Wireframe, false);
   connect(m_Viewport, &Viewport3D::edgesBusy, this, [this](bool busy) {
     if (busy)
       statusBar()->showMessage("Computing edges...");
@@ -360,7 +369,15 @@ void MainWindow::createMenus()
   });
   viewMenu->addSeparator();
   auto* fit = viewMenu->addAction("Fit to Window", m_Viewport, [this]() { m_Viewport->fitAll(); });
-  fit->setShortcuts({QKeySequence("Ctrl+0"), QKeySequence("F")});
+  fit->setShortcuts({QKeySequence("Ctrl+0"), QKeySequence("Ctrl+Shift+F")});
+  // Actions rather than keys of the 3D view, so that they work wherever the focus is.
+  using StandardView = Viewport3D::StandardView;
+  for (const auto& [text, key, view] : {std::tuple{"Top View", "Ctrl+7", StandardView::Top}, {"Front View", "Ctrl+1", StandardView::Front}, {"Right View", "Ctrl+3", StandardView::Right}})
+  {
+    auto* action = viewMenu->addAction(text, m_Viewport, [this, view]() { m_Viewport->standardView(view); });
+    action->setShortcut(QKeySequence(key));
+    addAction(action); // so that the shortcut works while the menu bar is hidden
+  }
   auto* ortho = viewMenu->addAction("Orthographic\tNumpad 5");
   ortho->setCheckable(true);
   connect(ortho, &QAction::toggled, m_Viewport, &Viewport3D::setOrthographic);
@@ -595,6 +612,8 @@ void MainWindow::onModelLoaded(quint64 id, const QString& path, LoadedModel mode
 
 void MainWindow::cancelLoad()
 {
+  // Escape also hands the keyboard back from the thumbnails (type-ahead) to the view.
+  if (m_Browser->isAncestorOf(QApplication::focusWidget())) m_Viewport->focusView();
   if (!m_Load.running) return;
   m_Load.cancel->store(true);
   m_Load.running = false;

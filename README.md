@@ -51,13 +51,18 @@ if there is no thumbnail of ours.
 | Ctrl+C | Copy the model file to the clipboard (paste it into XjetStudio, or a file manager) |
 | F5 | Reload |
 | View > Auto Reload | Reload the model whenever its file changes (e.g. a CadQuery export) |
-| F, Ctrl+0 | Fit the model to the window |
+| Ctrl+Shift+F, Ctrl+0 | Fit the model to the window |
 | Numpad 5 | Perspective / orthographic |
-| 7 / 1 / 3 (or Home / End / PgDn) | Top / front / right view |
+| Ctrl+7 / Ctrl+1 / Ctrl+3 (or Home / End / PgDn) | Top / front / right view |
 | Space, Shift+Down, Forward (Alt+Right), mouse Forward / Backspace, Shift+Up, Back (Alt+Left), mouse Back | Next / previous model |
+| Escape | Cancel a load; give the keyboard back to the 3D view |
+| Typing (anywhere) | Jumps to the file by name; no unmodified letter or digit is a command |
+| Ctrl+Shift+P / Ctrl+Shift+A | PBR shader / ambient occlusion |
+| Ctrl+E / Ctrl+Shift+E / Ctrl+Shift+W | Sharp edges / all edges / wireframe |
+| Left / Right | Previous / next model (in the 3D view; in the thumbnails they move the selection) |
 | Ctrl+M | Show or hide the menu bar |
 | F9 | Show or hide the thumbnail dock |
-| Q, Ctrl+Q | Quit |
+| Ctrl+Q | Quit |
 
 The mouse buttons depend on the navigation style (View > Navigation Style).
 

@@ -41,6 +41,9 @@ class ThumbnailBrowser : public QWidget
     // Drops files from the list (those that turned out not to be loadable)
     // without changing the selection or loading anything.
     void removeFiles(const QStringList& paths);
+    // Gives the list the keyboard and types `text` into its search by name.
+    void typeAhead(const QString& text);
+    void focusList();
 
     // The selected model files (the view allows several), sorted by path.
     QStringList selectedFiles() const;

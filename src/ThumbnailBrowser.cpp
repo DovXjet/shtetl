@@ -9,6 +9,7 @@
 #include <QMenu>
 #include <QHBoxLayout>
 #include <QLineEdit>
+#include <QKeyEvent>
 #include <QListView>
 #include <QMimeData>
 #include <QPainter>
@@ -113,6 +114,7 @@ ThumbnailBrowser::ThumbnailBrowser(ThumbnailService* service, QWidget* parent) :
     }
   });
   m_View->viewport()->installEventFilter(this);
+  m_View->installEventFilter(this);
 
   m_View->setContextMenuPolicy(Qt::CustomContextMenu);
   connect(m_View, &QWidget::customContextMenuRequested, this, &ThumbnailBrowser::onContextMenu);
@@ -142,6 +144,22 @@ ThumbnailBrowser::~ThumbnailBrowser()
 
 bool ThumbnailBrowser::eventFilter(QObject* watched, QEvent* event)
 {
+  // The list owns the keys it types and navigates by: the window's single-key
+  // shortcuts (P, A, Left, Space, ...) must not take them (type-ahead search).
+  if (event->type() == QEvent::ShortcutOverride && watched == m_View)
+  {
+    auto* key = static_cast<QKeyEvent*>(event);
+    const bool command = key->modifiers() & (Qt::ControlModifier | Qt::AltModifier | Qt::MetaModifier);
+    bool claim = !command && !key->text().isEmpty() && key->text().at(0).isPrint();
+    if (!command)
+      claim = claim || key->key() == Qt::Key_Left || key->key() == Qt::Key_Right || key->key() == Qt::Key_Up
+              || key->key() == Qt::Key_Down || key->key() == Qt::Key_Home || key->key() == Qt::Key_End;
+    if (claim)
+    {
+      event->accept();
+      return true;
+    }
+  }
   if (watched == m_View->viewport() && event->type() == QEvent::Wheel)
   {
     auto* wheel = static_cast<QWheelEvent*>(event);
@@ -165,6 +183,14 @@ bool ThumbnailBrowser::eventFilter(QObject* watched, QEvent* event)
     }
   }
   return QWidget::eventFilter(watched, event);
+}
+
+void ThumbnailBrowser::focusList() { m_View->setFocus(Qt::OtherFocusReason); }
+
+void ThumbnailBrowser::typeAhead(const QString& text)
+{
+  m_View->setFocus(Qt::OtherFocusReason);
+  m_View->keyboardSearch(text);
 }
 
 void ThumbnailBrowser::setIconSize(int size)

@@ -77,6 +77,10 @@ class Viewport3D : public QWidget
     // thread); this part has to run on the GUI thread. Throws as loadModel().
     void setModel(LoadedModel loaded);
     void clearModel();
+    // Gives the keyboard to the 3D view (its keys are the window's default).
+    void focusView();
+    enum class StandardView { Top, Front, Right };
+    void standardView(StandardView view);
     // Bounds of the model shown, in its own coordinates.
     vsg::dbox modelBounds() const { return m_ModelBounds; }
 
@@ -149,11 +153,15 @@ class Viewport3D : public QWidget
     void edgesBusy(bool busy);
     // A plain right-click in the view (not a drag, not on the orientation cube).
     void contextMenuRequested(const QPoint& globalPos);
+    // Left / Right (+1 / -1 for next / previous) were pressed in the view.
+    void stepRequested(int delta);
+    // A plain typed character (no Ctrl / Alt) was pressed in the view; it is
+    // for the file search of the thumbnails, not a command.
+    void typeAheadKey(const QString& text);
 
   private:
     bool eventFilter(QObject* watched, QEvent* event) override;
     void resizeEvent(QResizeEvent* event) override;
-    void showEvent(QShowEvent* event) override;
     void onContainerResized();
     void buildSceneGraph();
     // buildSceneGraph(), keeping the viewpoint the user was looking from.

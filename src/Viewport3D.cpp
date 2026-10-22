@@ -545,29 +545,25 @@ void Viewport3D::buildSceneGraph()
   m_Viewer->request();
 }
 
-// View-direction hotkeys, as in XjetStudio: 7/Home = top, 1/End = front, 3/PageDown = right.
+// View-direction hotkeys of the 3D view: Home = top, End = front, PageDown = right (and the numpad's 7, 1, 3). Ctrl+7/1/3 are View menu actions (standardView()).
 void Viewport3D::addKeyViewpoints(const vsg::dvec3& center, double distance)
 {
   auto lookAtTop = vsg::LookAt::create(center + vsg::dvec3(0.0, 0.0, distance), center, vsg::dvec3(0.0, 1.0, 0.0));
   auto lookAtFront = vsg::LookAt::create(center + vsg::dvec3(0.0, -distance, 0.0), center, vsg::dvec3(0.0, 0.0, 1.0));
   auto lookAtRight = vsg::LookAt::create(center + vsg::dvec3(distance, 0.0, 0.0), center, vsg::dvec3(0.0, 0.0, 1.0));
 
-  for (auto key : {vsg::KEY_7, vsg::KEY_KP_7, vsg::KEY_KP_Home, vsg::KEY_Home})
+  for (auto key : {vsg::KEY_KP_7, vsg::KEY_KP_Home, vsg::KEY_Home})
     m_Trackball->addKeyViewpoint(key, lookAtTop, 0.5);
-  for (auto key : {vsg::KEY_1, vsg::KEY_KP_1, vsg::KEY_KP_End, vsg::KEY_End})
+  for (auto key : {vsg::KEY_KP_1, vsg::KEY_KP_End, vsg::KEY_End})
     m_Trackball->addKeyViewpoint(key, lookAtFront, 0.5);
-  for (auto key : {vsg::KEY_3, vsg::KEY_KP_3, vsg::KEY_KP_Page_Down, vsg::KEY_Page_Down})
+  for (auto key : {vsg::KEY_KP_3, vsg::KEY_KP_Page_Down, vsg::KEY_Page_Down})
     m_Trackball->addKeyViewpoint(key, lookAtRight, 0.5);
 }
 
-void Viewport3D::showEvent(QShowEvent* event)
+void Viewport3D::focusView()
 {
-  QWidget::showEvent(event);
-  // Keyboard focus at launch so the view hotkeys work without a first click.
-  QTimer::singleShot(0, this, [this]() {
-    m_Container->setFocus(Qt::OtherFocusReason);
-    m_Window->requestActivate();
-  });
+  m_Container->setFocus(Qt::OtherFocusReason);
+  m_Window->requestActivate();
 }
 
 bool Viewport3D::eventFilter(QObject* watched, QEvent* event)
@@ -590,13 +586,43 @@ bool Viewport3D::eventFilter(QObject* watched, QEvent* event)
       if (!keyEvent->isAutoRepeat()) toggleProjection();
       return true;
     }
-    if (keyEvent->key() == Qt::Key_F && keyEvent->modifiers() == Qt::NoModifier)
+    // The 3D view is a native window, so Qt's shortcuts never see its keys;
+    // Left / Right step through the models here, as they do elsewhere.
+    if ((keyEvent->key() == Qt::Key_Left || keyEvent->key() == Qt::Key_Right) && keyEvent->modifiers() == Qt::NoModifier)
     {
-      if (!keyEvent->isAutoRepeat()) fitAll(true);
+      if (!keyEvent->isAutoRepeat()) emit stepRequested(keyEvent->key() == Qt::Key_Right ? +1 : -1);
+      return true;
+    }
+    // Typing anywhere finds a file by name, as in a file manager; the view's
+    // own commands are on Ctrl (or Numpad / Home / End / PgDn) keys.
+    const bool command = keyEvent->modifiers() & (Qt::ControlModifier | Qt::AltModifier | Qt::MetaModifier);
+    const QString text = keyEvent->text();
+    if (!command && !text.isEmpty() && text.at(0).isPrint() && !(keyEvent->modifiers() & Qt::KeypadModifier) && keyEvent->key() != Qt::Key_Space)
+    {
+      emit typeAheadKey(text);
       return true;
     }
   }
   return QWidget::eventFilter(watched, event);
+}
+
+// Looks at the model from the top, the front or the right, filling the view as fitAll() does.
+void Viewport3D::standardView(StandardView view)
+{
+  auto lookAt = m_Camera ? m_Camera->viewMatrix.cast<vsg::LookAt>() : nullptr;
+  if (!lookAt || !m_Projection || !m_Trackball) return;
+  double halfAngle = std::atan(std::tan(vsg::radians(m_Projection->fieldOfViewY) * 0.5) * std::min(1.0, m_Projection->aspectRatio));
+  const double distance = m_FitRadius * 1.05 / std::sin(halfAngle);
+  const vsg::dvec3 c = m_FitCenter;
+  vsg::ref_ptr<vsg::LookAt> target;
+  switch (view)
+  {
+    case StandardView::Top: target = vsg::LookAt::create(c + vsg::dvec3(0.0, 0.0, distance), c, vsg::dvec3(0.0, 1.0, 0.0)); break;
+    case StandardView::Front: target = vsg::LookAt::create(c + vsg::dvec3(0.0, -distance, 0.0), c, vsg::dvec3(0.0, 0.0, 1.0)); break;
+    case StandardView::Right: target = vsg::LookAt::create(c + vsg::dvec3(distance, 0.0, 0.0), c, vsg::dvec3(0.0, 0.0, 1.0)); break;
+  }
+  m_Trackball->setViewpoint(target, 0.5);
+  m_Viewer->request();
 }
 
 // Keeps the current view direction and centers the whole model in view.
