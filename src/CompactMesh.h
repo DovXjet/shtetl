@@ -27,6 +27,9 @@ struct CompactSource
     // (then dirty()) while they are shown.
     bool pbr = false;
     vsg::ref_ptr<vsg::PbrMaterialValue> pbrMaterial;
+    // Per vertex, the sRGB color of its triangle as 0xAABBGGRR with AA = 255
+    // (0: the material's color). Null when the model has no colors of its own.
+    vsg::ref_ptr<vsg::uintArray> colors;
     explicit operator bool() const { return vertices.valid(); }
 };
 
@@ -64,6 +67,8 @@ struct IndexedMesh
 {
     std::vector<vsg::vec3> vertices;
     std::vector<vsg::uivec3> triangles;
+    // Per triangle, as CompactSource::colors; empty when there are no colors.
+    std::vector<uint32_t> triangleColors;
 };
 
 // Reads all the build items of a 3MF file (with their transforms and

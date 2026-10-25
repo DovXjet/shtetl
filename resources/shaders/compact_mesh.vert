@@ -13,9 +13,11 @@ layout(push_constant) uniform PushConstants {
 } pc;
 
 layout(location = 0) in uvec3 vsg_PackedData;
+layout(location = 1) in uint vsg_Color;
 
 layout(location = 0) out vec3 frag_normal;
 layout(location = 1) out vec3 frag_vertex;
+layout(location = 2) flat out uint frag_color;
 
 vec3 decodeOctNormal(uint lowX, uint lowY, uint highX, uint highY)
 {
@@ -45,6 +47,7 @@ void main()
     vec4 viewPos = pc.modelView * vec4(objectPos, 1.0);
     gl_Position = pc.projection * viewPos;
     frag_vertex = viewPos.xyz;
+    frag_color = vsg_Color;
 
     // The normal was encoded in the normalised box space, where it is
     // covariant: the inverse transpose of the model-view undoes the box's

@@ -11,7 +11,9 @@
 
 // A reader of the geometry of 3MF files (the 3D Manufacturing Format core
 // specification): meshes, components and build items with their transforms and
-// the unit. Colors, materials and the other extensions are ignored.
+// the unit, and the colors of the core materials (basematerials) and of the
+// materials extension's color groups, per object and per triangle. Textures and
+// the other extensions are ignored.
 
 namespace
 {
@@ -61,10 +63,29 @@ namespace
     Transform transform;
   };
 
+  // The colors of a property group (basematerials or colorgroup), 0xAABBGGRR
+  // with AA = 255, or 0 for one that can't be read.
+  using ColorGroups = std::map<int, std::vector<uint32_t>>;
+
+  uint32_t parseColor(const QString& text)
+  {
+    QString hex = text.trimmed();
+    if (hex.startsWith('#')) hex.remove(0, 1);
+    if (hex.size() != 6 && hex.size() != 8) return 0;
+    bool ok = false;
+    const uint32_t rgb = hex.left(6).toUInt(&ok, 16);
+    if (!ok) return 0;
+    return 0xFF000000u | ((rgb & 0xFF) << 16) | (rgb & 0xFF00) | (rgb >> 16);
+  }
+
   struct Object
   {
     std::vector<vsg::vec3> vertices;
     std::vector<vsg::uivec3> triangles;
+    int pid = -1, pindex = 0;            // the object's color
+    std::vector<int> trianglePid;        // per triangle, -1 for the object's
+    std::vector<int> trianglePindex;     // (the first vertex's, if it has its own)
+    std::vector<uint32_t> triangleColors; // resolved, 0xAABBGGRR; 0 for none
     std::vector<Component> components;
   };
 
@@ -87,6 +108,8 @@ namespace
     const uint32_t base = static_cast<uint32_t>(out.vertices.size());
     for (const auto& v : object.vertices) out.vertices.push_back(transform.apply(v));
     for (const auto& t : object.triangles) out.triangles.emplace_back(t.x + base, t.y + base, t.z + base);
+    out.triangleColors.resize(out.triangles.size() - object.triangles.size(), 0);
+    out.triangleColors.insert(out.triangleColors.end(), object.triangleColors.begin(), object.triangleColors.end());
     for (const auto& c : object.components)
       instantiate(objects, c.objectId, Transform::compose(c.transform, transform), out, depth + 1);
   }
@@ -147,6 +170,8 @@ IndexedMesh read3MF(const QString& path, const std::atomic<bool>* cancel)
 
   std::map<int, Object> objects;
   std::vector<Component> buildItems;
+  ColorGroups colorGroups;
+  std::vector<uint32_t>* group = nullptr;
   double scale = 1.0;
 
   QXmlStreamReader reader(xml);
@@ -164,13 +189,31 @@ IndexedMesh read3MF(const QString& path, const std::atomic<bool>* cancel)
       if (name == u"model")
         scale = unitToMillimeters(a.value("unit").toString());
       else if (name == u"object")
+      {
         current = &objects[a.value("id").toInt()];
+        if (a.hasAttribute("pid"))
+        {
+          current->pid = a.value("pid").toInt();
+          current->pindex = a.value("pindex").toInt();
+        }
+      }
+      else if (name == u"basematerials" || name == u"colorgroup")
+        group = &colorGroups[a.value("id").toInt()];
+      else if (name == u"base" && group)
+        group->push_back(parseColor(a.value("displaycolor").toString()));
+      else if (name == u"color" && group)
+        group->push_back(parseColor(a.value("color").toString()));
       else if (name == u"build")
         inBuild = true;
       else if (name == u"vertex" && current)
         current->vertices.emplace_back(a.value("x").toFloat(), a.value("y").toFloat(), a.value("z").toFloat());
       else if (name == u"triangle" && current)
+      {
         current->triangles.emplace_back(a.value("v1").toUInt(), a.value("v2").toUInt(), a.value("v3").toUInt());
+        const bool own = a.hasAttribute("pid") || a.hasAttribute("p1");
+        current->trianglePid.push_back(a.hasAttribute("pid") ? a.value("pid").toInt() : (own ? current->pid : -1));
+        current->trianglePindex.push_back(a.hasAttribute("p1") ? a.value("p1").toInt() : (own ? current->pindex : 0));
+      }
       else if (name == u"component" && current)
         current->components.push_back({a.value("objectid").toInt(), Transform::fromAttribute(a.value("transform").toString())});
       else if (name == u"item" && inBuild)
@@ -180,6 +223,7 @@ IndexedMesh read3MF(const QString& path, const std::atomic<bool>* cancel)
     {
       if (reader.name() == u"object") current = nullptr;
       if (reader.name() == u"build") inBuild = false;
+      if (reader.name() == u"basematerials" || reader.name() == u"colorgroup") group = nullptr;
     }
   }
   if (reader.hasError()) throw std::runtime_error("Bad 3MF model: " + reader.errorString().toStdString());
@@ -190,10 +234,25 @@ IndexedMesh read3MF(const QString& path, const std::atomic<bool>* cancel)
       if (t.x >= object.vertices.size() || t.y >= object.vertices.size() || t.z >= object.vertices.size())
         throw std::runtime_error("The 3MF has triangles with invalid vertex indices");
 
+  // The color of every triangle: its own property, else its object's.
+  auto colorOf = [&colorGroups](int pid, int pindex) -> uint32_t {
+    const auto it = colorGroups.find(pid);
+    if (it == colorGroups.end() || pindex < 0 || size_t(pindex) >= it->second.size()) return 0;
+    return it->second[size_t(pindex)];
+  };
+  for (auto& [id, object] : objects)
+  {
+    object.triangleColors.resize(object.triangles.size());
+    for (size_t i = 0; i < object.triangles.size(); ++i)
+      object.triangleColors[i] = object.trianglePid[i] >= 0 ? colorOf(object.trianglePid[i], object.trianglePindex[i]) : colorOf(object.pid, object.pindex);
+  }
+
   IndexedMesh mesh;
   if (buildItems.empty()) // no build section: everything there is
     for (const auto& [id, object] : objects) buildItems.push_back({id, Transform()});
   for (const auto& item : buildItems) instantiate(objects, item.objectId, item.transform, mesh, 0);
+
+  if (std::all_of(mesh.triangleColors.begin(), mesh.triangleColors.end(), [](uint32_t c) { return c == 0; })) mesh.triangleColors.clear();
 
   if (scale != 1.0)
     for (auto& v : mesh.vertices) v = v * float(scale);

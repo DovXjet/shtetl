@@ -17,6 +17,16 @@ layout(set = 1, binding = 10) uniform MaterialData
 
 layout(location = 0) in vec3 normal;
 layout(location = 1) in vec3 pos;
+layout(location = 2) flat in uint vcolor;
+
+// The color a triangle's file gave it (sRGB bytes, 0xAABBGGRR; 0 for none),
+// in linear light, or `fallback`.
+vec3 fileColor(uint packed, vec3 fallback)
+{
+    if ((packed >> 24) == 0u) return fallback;
+    vec3 c = vec3(packed & 0xFFu, (packed >> 8) & 0xFFu, (packed >> 16) & 0xFFu) / 255.0;
+    return mix(c / 12.92, pow((c + 0.055) / 1.055, vec3(2.4)), step(vec3(0.04045), c));
+}
 
 layout(location = 0) out vec4 outColor;
 
@@ -26,6 +36,7 @@ const vec3 lightPos = vec3(0, 0, 5);
 
 void main()
 {
+    vec3 base = fileColor(vcolor, material.diffuseColor.xyz);
     vec3 N = normalize(normal);
     if (!gl_FrontFacing) N = -N;
 
@@ -44,7 +55,7 @@ void main()
     Ks += pow(max(dot(R, V), 0.0), material.shininess) * lightStrength1;
 
     outColor = vec4(material.ambientColor.xyz
-                    + material.diffuseColor.xyz * Kd * 0.7
+                    + base * Kd * 0.7
                     + material.specularColor.xyz * Ks * 0.02,
                     material.diffuseColor.w);
 }

@@ -93,6 +93,9 @@ namespace
 
     // The vertex is three uints, not a vec3, and has no other attributes.
     shaderSet->addAttributeBinding("vsg_Vertex", "", 0, VK_FORMAT_R32G32B32_UINT, vsg::vec3Array::create(1));
+    // The color of the triangle's file, if it has one. Without colors this is a
+    // single 0 read at instance rate: every vertex gets the material's color.
+    shaderSet->addAttributeBinding("vsg_Color", "", 1, VK_FORMAT_R32_UINT, vsg::uintArray::create(1));
 
     auto material = vsg::PhongMaterialValue::create();
     material->value().ambient = vsg::vec4{0.12f, 0.12f, 0.12f, 1.0f};
@@ -107,6 +110,13 @@ namespace
     auto config = vsg::GraphicsPipelineConfigurator::create(shaderSet);
     config->assignDescriptor("material", materialData);
     config->enableArray("vsg_Vertex", VK_VERTEX_INPUT_RATE_VERTEX, 12);
+    auto colors = source.colors;
+    if (!colors)
+    {
+      colors = vsg::uintArray::create(1);
+      colors->set(0, 0u);
+    }
+    config->enableArray("vsg_Color", source.colors ? VK_VERTEX_INPUT_RATE_VERTEX : VK_VERTEX_INPUT_RATE_INSTANCE, 4);
 
     // Both sides of a face are drawn (the fragment shader lights both).
     auto rasterization = vsg::RasterizationState::create();
@@ -130,7 +140,7 @@ namespace
     stateGroup->prototypeArrayState = config->getSuitableArrayState();
 
     auto draw = vsg::VertexDraw::create();
-    draw->assignArrays(vsg::DataList{vertices});
+    draw->assignArrays(vsg::DataList{vertices, colors});
     draw->instanceCount = 1;
     draw->vertexCount = static_cast<uint32_t>(vertices->size());
     stateGroup->addChild(draw);
@@ -145,7 +155,8 @@ namespace
   // vec3. Two passes over them (bounds, then encoding), so that a source that
   // reads them straight from a mapped file never needs them in memory twice.
   template <class GetTriangle>
-  LoadedModel pack(size_t faces, GetTriangle getTriangle, const std::atomic<bool>* cancel, const vsg::vec4& diffuse, const LoadProgress& progress)
+  LoadedModel pack(size_t faces, GetTriangle getTriangle, const std::atomic<bool>* cancel, const vsg::vec4& diffuse, const LoadProgress& progress,
+                   const std::vector<uint32_t>* triangleColors = nullptr)
   {
     if (faces == 0) throw std::runtime_error("The file has no triangles");
     if (faces > 0x7FFFFFFF / 3) throw std::runtime_error("Too many triangles");
@@ -219,6 +230,12 @@ namespace
 
     LoadedModel model;
     model.compact = CompactSource{vertices, vsg::dvec3(lo.x, lo.y, lo.z), vsg::dvec3(range.x, range.y, range.z), diffuse};
+    if (triangleColors && triangleColors->size() == faces)
+    {
+      model.compact.colors = vsg::uintArray::create(static_cast<uint32_t>(faces * 3));
+      for (size_t face = 0; face < faces; ++face)
+        for (size_t v = 0; v < 3; ++v) model.compact.colors->set(face * 3 + v, (*triangleColors)[face]);
+    }
     // For the physically based mode; changed live, so dynamic.
     model.compact.pbrMaterial = vsg::PbrMaterialValue::create();
     model.compact.pbrMaterial->properties.dataVariance = vsg::DYNAMIC_DATA;
@@ -310,7 +327,7 @@ LoadedModel load3MF(const QString& path, const std::atomic<bool>* cancel, const 
   const IndexedMesh mesh = read3MF(path, cancel);
   return pack(mesh.triangles.size(), [&mesh](size_t i, vsg::vec3* p) {
     for (int v = 0; v < 3; ++v) p[v] = mesh.vertices[mesh.triangles[i][v]];
-  }, cancel, diffuse, progress);
+  }, cancel, diffuse, progress, mesh.triangleColors.empty() ? nullptr : &mesh.triangleColors);
 }
 
 namespace
