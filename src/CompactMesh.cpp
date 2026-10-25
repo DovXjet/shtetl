@@ -325,9 +325,22 @@ LoadedModel loadStl(const QString& path, const std::atomic<bool>* cancel, const 
 LoadedModel load3MF(const QString& path, const std::atomic<bool>* cancel, const vsg::vec4& diffuse, const LoadProgress& progress)
 {
   const IndexedMesh mesh = read3MF(path, cancel);
+  // One color for the whole file: it is the model's color, no per-vertex data.
+  vsg::vec4 color = diffuse;
+  bool perTriangle = !mesh.triangleColors.empty();
+  if (perTriangle && std::all_of(mesh.triangleColors.begin(), mesh.triangleColors.end(), [&mesh](uint32_t c) { return c == mesh.triangleColors.front(); }))
+  {
+    const uint32_t c = mesh.triangleColors.front();
+    auto linear = [](uint32_t byte) {
+      const float f = float(byte) / 255.0f;
+      return f <= 0.04045f ? f / 12.92f : std::pow((f + 0.055f) / 1.055f, 2.4f);
+    };
+    color = vsg::vec4(linear(c & 0xFF), linear((c >> 8) & 0xFF), linear((c >> 16) & 0xFF), diffuse.a);
+    perTriangle = false;
+  }
   return pack(mesh.triangles.size(), [&mesh](size_t i, vsg::vec3* p) {
     for (int v = 0; v < 3; ++v) p[v] = mesh.vertices[mesh.triangles[i][v]];
-  }, cancel, diffuse, progress, mesh.triangleColors.empty() ? nullptr : &mesh.triangleColors);
+  }, cancel, color, progress, perTriangle ? &mesh.triangleColors : nullptr);
 }
 
 namespace
