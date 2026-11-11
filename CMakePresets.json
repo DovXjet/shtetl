@@ -30,6 +30,9 @@
       "name": "windows-release",
       "inherits": "base",
       "toolchainFile": "c:/vcpkg/scripts/buildsystems/vcpkg.cmake",
+      "environment": {
+        "VCPKG_BINARY_SOURCES": "clear;files,C:/bt,readwrite;default,read"
+      },
       "architecture": {
         "value": "x64",
         "strategy": "external"
@@ -37,13 +40,16 @@
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Release",
         "CMAKE_POLICY_VERSION_MINIMUM": "3.5",
-        "VCPKG_INSTALL_OPTIONS": "--x-buildtrees-root=C:/vbt"
+        "VCPKG_INSTALL_OPTIONS": "--x-buildtrees-root=C:/bt"
       }
     },
     {
       "name": "windows-RelWithDebInfo",
       "inherits": "base",
       "toolchainFile": "c:/vcpkg/scripts/buildsystems/vcpkg.cmake",
+      "environment": {
+        "VCPKG_BINARY_SOURCES": "clear;files,C:/bt,readwrite;default,read"
+      },
       "architecture": {
         "value": "x64",
         "strategy": "external"
@@ -51,7 +57,7 @@
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "RelWithDebInfo",
         "CMAKE_POLICY_VERSION_MINIMUM": "3.5",
-        "VCPKG_INSTALL_OPTIONS": "--x-buildtrees-root=C:/vbt"
+        "VCPKG_INSTALL_OPTIONS": "--x-buildtrees-root=C:/bt"
       }
     }
   ],
