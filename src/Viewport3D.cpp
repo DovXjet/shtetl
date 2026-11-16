@@ -34,6 +34,7 @@
 #include <algorithm>
 #include <cmath>
 #include <functional>
+#include <random>
 
 namespace
 {
@@ -321,9 +322,26 @@ void Viewport3D::setModel(LoadedModel loaded)
   const auto oldModel = m_Model;
   const auto oldBounds = m_ModelBounds;
   const auto oldCompact = m_Compact;
+  auto oldParts = std::move(m_Parts);
+  const auto oldFullVertices = m_FullVertices;
+  const auto oldFullColors = m_FullColors;
   m_Model = loaded.node;
   m_ModelBounds = loaded.bounds;
   m_Compact = loaded.compact;
+  m_Parts = loaded.compact ? loaded.parts : std::vector<PartNode>();
+  m_FullVertices = loaded.compact.vertices;
+  m_FullColors = loaded.compact.colors;
+  auto oldStates = std::move(m_PartStates);
+  const auto oldGhostVertices = m_GhostVertices;
+  const auto oldGhostColors = m_GhostColors;
+  m_PartStates.assign(m_Parts.size(), PartState::Opaque);
+  m_GhostVertices = nullptr;
+  m_GhostColors = nullptr;
+  if (m_RandomPartColors && !m_Parts.empty())
+  {
+    m_Compact.colors = fullColors();
+    m_Model = makeCompactNode(m_Compact);
+  }
   const auto oldEdges = m_Edges;
   m_Edges = {};
   collectMaterials();
@@ -342,6 +360,12 @@ void Viewport3D::setModel(LoadedModel loaded)
     m_Model = oldModel;
     m_ModelBounds = oldBounds;
     m_Compact = oldCompact;
+    m_Parts = std::move(oldParts);
+    m_FullVertices = oldFullVertices;
+    m_FullColors = oldFullColors;
+    m_PartStates = std::move(oldStates);
+    m_GhostVertices = oldGhostVertices;
+    m_GhostColors = oldGhostColors;
     m_Edges = oldEdges;
     collectMaterials();
     updateCompactMaterial(false);
@@ -376,9 +400,134 @@ void Viewport3D::clearModel()
   m_Model = nullptr;
   m_ModelBounds = vsg::dbox();
   m_Compact = {};
+  m_Parts.clear();
+  m_PartStates.clear();
+  m_GhostVertices = nullptr;
+  m_GhostColors = nullptr;
+  m_FullVertices = nullptr;
+  m_FullColors = nullptr;
   m_PbrMaterials.clear();
   m_Edges = {};
   buildSceneGraph();
+  resetEdges();
+}
+
+vsg::ref_ptr<vsg::uintArray> Viewport3D::fullColors() const
+{
+  if (!m_RandomPartColors || m_Parts.empty() || !m_FullVertices) return m_FullColors;
+  auto colors = vsg::uintArray::create(static_cast<uint32_t>(m_FullVertices->size()));
+
+  // The leaves take golden ratio steps around the hues in an order that the seed
+  // shuffles, so that neighbours differ and another seed brings other colors. The
+  // color of a part follows from its place in the file alone: hiding others or
+  // reloading leaves it as it is.
+  std::vector<size_t> leaves;
+  for (size_t i = 0; i < m_Parts.size(); ++i)
+    if (m_Parts[i].leaf) leaves.push_back(i);
+  std::mt19937 random(m_ColorSeed);
+  std::shuffle(leaves.begin(), leaves.end(), random);
+  const double offset = std::uniform_real_distribution<double>(0.0, 1.0)(random);
+  for (size_t k = 0; k < leaves.size(); ++k)
+  {
+    const PartNode& part = m_Parts[leaves[k]];
+    const QColor color = QColor::fromHsvF(float(std::fmod(offset + double(k) * 0.61803398875, 1.0)), 0.5f + 0.2f * float(k % 3) / 2.0f, 0.9f - 0.1f * float(k % 2));
+    const uint32_t packed = 0xFF000000u | (uint32_t(color.blue()) << 16) | (uint32_t(color.green()) << 8) | uint32_t(color.red());
+    std::fill_n(colors->data() + size_t(part.firstTriangle) * 3, size_t(part.endTriangle - part.firstTriangle) * 3, packed);
+  }
+  return colors;
+}
+
+void Viewport3D::setPartStates(const std::vector<PartState>& states)
+{
+  if (states.size() != m_Parts.size()) return;
+  m_PartStates = states;
+  applyParts();
+}
+
+void Viewport3D::setRandomPartColors(bool enabled, unsigned seed)
+{
+  if (enabled == m_RandomPartColors && seed == m_ColorSeed) return;
+  m_RandomPartColors = enabled;
+  m_ColorSeed = seed;
+  applyParts();
+}
+
+vsg::ref_ptr<vsg::Node> Viewport3D::makeGhostNode() const
+{
+  if (!m_GhostVertices || !m_Compact) return {};
+  CompactSource ghost = m_Compact;
+  ghost.vertices = m_GhostVertices;
+  ghost.colors = m_GhostColors;
+  ghost.diffuse.a = 0.25f;
+  ghost.pbr = false; // the Phong shaders have the alpha
+  ghost.blend = true;
+  return makeCompactNode(ghost);
+}
+
+void Viewport3D::applyParts()
+{
+  if (!m_Compact || !m_Model || !m_FullVertices || m_Parts.empty() || m_PartStates.size() != m_Parts.size()) return;
+  const auto source = fullColors();
+  const size_t total = m_FullVertices->size() / 3;
+
+  // The packed vertices (and colors) of the leaves that are in `wanted`, one
+  // after the other; empty when there are none.
+  auto gather = [&](PartState wanted, vsg::ref_ptr<vsg::uivec3Array>& vertices, vsg::ref_ptr<vsg::uintArray>& colors) {
+    size_t triangles = 0;
+    for (size_t i = 0; i < m_Parts.size(); ++i)
+      if (m_Parts[i].leaf && m_PartStates[i] == wanted) triangles += m_Parts[i].endTriangle - m_Parts[i].firstTriangle;
+    vertices = nullptr;
+    colors = nullptr;
+    if (triangles == 0) return triangles;
+    if (triangles == total)
+    {
+      vertices = m_FullVertices;
+      colors = source;
+      return triangles;
+    }
+    vertices = vsg::uivec3Array::create(static_cast<uint32_t>(triangles * 3));
+    if (source) colors = vsg::uintArray::create(static_cast<uint32_t>(triangles * 3));
+    size_t at = 0;
+    for (size_t i = 0; i < m_Parts.size(); ++i)
+    {
+      if (!m_Parts[i].leaf || m_PartStates[i] != wanted) continue;
+      const size_t count = (m_Parts[i].endTriangle - m_Parts[i].firstTriangle) * 3;
+      const size_t from = size_t(m_Parts[i].firstTriangle) * 3;
+      std::copy_n(m_FullVertices->data() + from, count, vertices->data() + at);
+      if (colors) std::copy_n(source->data() + from, count, colors->data() + at);
+      at += count;
+    }
+    return triangles;
+  };
+
+  vsg::ref_ptr<vsg::uivec3Array> vertices;
+  vsg::ref_ptr<vsg::uintArray> colors;
+  if (gather(PartState::Opaque, vertices, colors) == 0)
+  {
+    // Nothing to draw, but a buffer can't be empty: one triangle with no area.
+    vertices = vsg::uivec3Array::create(3);
+    for (uint32_t v = 0; v < 3; ++v) vertices->set(v, vsg::uivec3(0, 0, 0));
+    if (source)
+    {
+      colors = vsg::uintArray::create(3);
+      for (uint32_t v = 0; v < 3; ++v) colors->set(v, 0u);
+    }
+  }
+  gather(PartState::Transparent, m_GhostVertices, m_GhostColors);
+
+  m_Compact.vertices = vertices;
+  m_Compact.colors = colors;
+  m_Model = makeCompactNode(m_Compact);
+  m_Edges = {};
+  try
+  {
+    // The bounds, and so the fit, are those of the whole model: the view stays.
+    if (m_Camera && m_Window && m_Window->windowAdapter) rebuildSceneGraph();
+  }
+  catch (const vsg::Exception& e)
+  {
+    spdlog::error("Showing the parts failed: {} (VkResult {})", e.message, e.result);
+  }
   resetEdges();
 }
 
@@ -420,6 +569,9 @@ void Viewport3D::buildSceneGraph()
     if (!wireframeActive()) root->addChild(m_Model);
     if (m_EdgeMode != EdgeMode::Off && m_Compact && m_Edges)
       root->addChild(makeEdgesNode(m_Edges, m_EdgeMode == EdgeMode::Sharp, m_Compact, m_EdgeStyle, false, wireframeActive()));
+    // After the solid parts and the edges: it blends with what is behind it.
+    if (!wireframeActive())
+      if (auto ghosts = makeGhostNode()) root->addChild(ghosts);
 
     if (m_ModelBounds.valid())
     {

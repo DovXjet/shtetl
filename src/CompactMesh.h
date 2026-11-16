@@ -30,7 +30,31 @@ struct CompactSource
     // Per vertex, the sRGB color of its triangle as 0xAABBGGRR with AA = 255
     // (0: the material's color). Null when the model has no colors of its own.
     vsg::ref_ptr<vsg::uintArray> colors;
+    // Alpha blended (diffuse.a is the opacity) and without a depth write, for
+    // the see-through parts; not for the G-buffer pass.
+    bool blend = false;
     explicit operator bool() const { return vertices.valid(); }
+};
+
+// How a part of a model is shown: not at all, as a see-through ghost, or solid.
+enum class PartState : char
+{
+    Off,
+    Transparent,
+    Opaque
+};
+
+// One node of the hierarchy of a 3MF or STEP file (objects and components,
+// assemblies and parts), flat in depth first order: a parent comes before its
+// children. A leaf owns the triangles [firstTriangle, endTriangle) of the mesh
+// (which are the vertices 3 * first .. 3 * end of the compact array); a group
+// owns none of its own.
+struct PartNode
+{
+    QString name;
+    int parent = -1; // index of the parent node, -1 for a root
+    bool leaf = true;
+    uint32_t firstTriangle = 0, endTriangle = 0;
 };
 
 // A model ready to add to a scene, with its bounds in its own coordinates
@@ -40,6 +64,7 @@ struct LoadedModel
     vsg::ref_ptr<vsg::Node> node;
     vsg::dbox bounds;
     CompactSource compact;
+    std::vector<PartNode> parts; // of the compact mesh; empty when the file has no hierarchy
     vsg::Animations animations; // of the file (glTF, ...), none for STL and 3MF
 };
 
@@ -62,6 +87,10 @@ using LoadProgress = std::function<void(int percent)>;
 LoadedModel loadModel(const QString& path, vsg::ref_ptr<vsg::Options> options, const std::atomic<bool>* cancel = nullptr,
                       const vsg::vec4& diffuse = vsg::vec4(0.85f, 0.85f, 0.85f, 1.0f), const LoadProgress& progress = {});
 
+// Drops the nodes of a hierarchy that have no triangles, and the whole
+// hierarchy if it has fewer than two parts.
+void pruneParts(std::vector<PartNode>& parts);
+
 // An indexed triangle mesh, as 3MF delivers it.
 struct IndexedMesh
 {
@@ -69,6 +98,8 @@ struct IndexedMesh
     std::vector<vsg::uivec3> triangles;
     // Per triangle, as CompactSource::colors; empty when there are no colors.
     std::vector<uint32_t> triangleColors;
+    // The hierarchy of the file, when it has one (see PartNode).
+    std::vector<PartNode> parts;
 };
 
 // Reads all the build items of a 3MF file (with their transforms and

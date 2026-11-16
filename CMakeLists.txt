@@ -74,6 +74,7 @@ add_executable(shtetl
   src/ThumbnailRenderer.cpp
   src/ThumbnailService.cpp
   src/ThumbnailBrowser.cpp
+  src/PartsPanel.cpp
   src/OpenFileDialog.cpp
   src/Preferences.cpp
 )
@@ -122,7 +123,7 @@ if(OpenCASCADE_FOUND)
   target_sources(shtetl PRIVATE src/CadReader.cpp)
   target_compile_definitions(shtetl PRIVATE SHTETL_HAS_CAD)
   target_include_directories(shtetl PRIVATE ${OpenCASCADE_INCLUDE_DIR})
-  target_link_libraries(shtetl PRIVATE TKDESTEP TKDEIGES TKBRep TKMesh TKGeomBase TKG3d TKMath TKTopAlgo TKGeomAlgo TKernel)
+  target_link_libraries(shtetl PRIVATE TKDESTEP TKDEIGES TKXCAF TKLCAF TKCDF TKBRep TKMesh TKGeomBase TKG3d TKMath TKTopAlgo TKGeomAlgo TKernel)
 else()
   message(STATUS "OpenCASCADE not found: STEP and IGES import disabled")
 endif()

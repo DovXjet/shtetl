@@ -103,6 +103,16 @@ class Viewport3D : public QWidget
     // thread); this part has to run on the GUI thread. Throws as loadModel().
     void setModel(LoadedModel loaded);
     void clearModel();
+    // The hierarchy of the model (3MF objects, STEP assemblies); empty when it has none.
+    const std::vector<PartNode>& parts() const { return m_Parts; }
+    // Sets how each part of parts() is shown (one state per node; those of
+    // groups are ignored). The view stays as it is. Transparent parts are
+    // drawn as ghosts, which the ambient occlusion mode leaves out.
+    void setPartStates(const std::vector<PartState>& states);
+    // Gives every part of a model with a hierarchy a color of its own, instead
+    // of the file's colors (or the model color); another seed, other colors.
+    // Remembered for later models.
+    void setRandomPartColors(bool enabled, unsigned seed);
     // Gives the keyboard to the 3D view (its keys are the window's default).
     void focusView();
     enum class StandardView { Top, Front, Right };
@@ -227,7 +237,22 @@ class Viewport3D : public QWidget
     vsg::ref_ptr<vsg::Node> m_Model;
     vsg::ref_ptr<vsg::Node> m_StudioLights; // the lights of the scene graph
     vsg::dbox m_ModelBounds;
-    CompactSource m_Compact; // of the model, when it is one
+    CompactSource m_Compact; // of the model, when it is one (with only the visible parts)
+    // The whole compact mesh and its hierarchy: m_Compact is made from them by setPartsVisible().
+    std::vector<PartNode> m_Parts;
+    vsg::ref_ptr<vsg::uivec3Array> m_FullVertices;
+    vsg::ref_ptr<vsg::uintArray> m_FullColors;
+    std::vector<PartState> m_PartStates; // per node, as last set
+    // The transparent parts, packed like m_Compact; null when there are none.
+    vsg::ref_ptr<vsg::uivec3Array> m_GhostVertices;
+    vsg::ref_ptr<vsg::uintArray> m_GhostColors;
+    bool m_RandomPartColors = false;
+    unsigned m_ColorSeed = 0;
+    vsg::ref_ptr<vsg::Node> makeGhostNode() const;
+    // The colors that are shown for the whole mesh: the file's, or one per part.
+    vsg::ref_ptr<vsg::uintArray> fullColors() const;
+    // Makes m_Compact (the opaque parts) and the ghosts from the whole mesh, the states and the colors.
+    void applyParts();
     QColor m_Background = defaultBackground();
     QColor m_BackgroundBottom = defaultBackgroundBottom();
     bool m_GradientBackground = false;

@@ -9,7 +9,16 @@
 #include <Message_ProgressRange.hxx>
 #include <OSD_ThreadPool.hxx>
 #include <Poly_Triangulation.hxx>
+#include <STEPCAFControl_Reader.hxx>
 #include <STEPControl_Reader.hxx>
+#include <TDF_Label.hxx>
+#include <TDF_LabelSequence.hxx>
+#include <TDataStd_Name.hxx>
+#include <TDocStd_Document.hxx>
+#include <XCAFDoc_DocumentTool.hxx>
+#include <XCAFDoc_ShapeTool.hxx>
+#include <BRep_Builder.hxx>
+#include <TopoDS_Compound.hxx>
 #include <Standard_Failure.hxx>
 #include <TopExp_Explorer.hxx>
 #include <TopLoc_Location.hxx>
@@ -19,6 +28,7 @@
 #include <gp_Pnt.hxx>
 #include <gp_Trsf.hxx>
 
+#include <QFileInfo>
 #include <QSettings>
 
 #include <spdlog/spdlog.h>
@@ -92,6 +102,57 @@ namespace
     // unsupported entities only).
     if (!hasShapes(shape)) throw std::runtime_error(std::string("No transferable geometry found in the ") + what + " file");
     return shape;
+  }
+
+  // The assembly tree of a STEP file (see walkLabel): the nodes, and for the
+  // leaves the located shape that makes up the part.
+  struct StepTree
+  {
+      std::vector<PartNode> nodes;
+      std::vector<TopoDS_Shape> shapes; // parallel to nodes; null for the groups
+  };
+
+  QString labelName(const TDF_Label& label)
+  {
+    Handle(TDataStd_Name) name;
+    if (label.IsNull() || !label.FindAttribute(TDataStd_Name::GetID(), name)) return {};
+    const TCollection_ExtendedString& text = name->Get();
+    return QString::fromUtf16(reinterpret_cast<const char16_t*>(text.ToExtString()), static_cast<qsizetype>(text.Length())).trimmed();
+  }
+
+  // Adds the shape of `label` to the tree: an assembly as a group of its
+  // components (each placed by its own location, relative to the assembly), any
+  // other shape as a leaf.
+  void walkLabel(const TDF_Label& label, const TopLoc_Location& location, int parent, StepTree& tree, int depth)
+  {
+    if (depth > 64) return;
+    TDF_Label referred = label;
+    if (XCAFDoc_ShapeTool::IsReference(label)) XCAFDoc_ShapeTool::GetReferredShape(label, referred);
+    QString name = labelName(label);
+    // (A component with no name of its own is named "=>[label]" by the reader.)
+    if (name.isEmpty() || name.startsWith("=>")) name = labelName(referred);
+    if (name.isEmpty()) name = parent < 0 ? QString("Model") : QString("Part %1").arg(tree.nodes.size());
+
+    const int node = static_cast<int>(tree.nodes.size());
+    PartNode part;
+    part.name = name;
+    part.parent = parent;
+    if (XCAFDoc_ShapeTool::IsAssembly(referred))
+    {
+      part.leaf = false;
+      tree.nodes.push_back(part);
+      tree.shapes.emplace_back();
+      TDF_LabelSequence components;
+      XCAFDoc_ShapeTool::GetComponents(referred, components);
+      for (Standard_Integer i = 1; i <= components.Length(); ++i)
+        walkLabel(components.Value(i), location * XCAFDoc_ShapeTool::GetLocation(components.Value(i)), node, tree, depth + 1);
+    }
+    else
+    {
+      const TopoDS_Shape shape = XCAFDoc_ShapeTool::GetShape(referred);
+      tree.nodes.push_back(part);
+      tree.shapes.push_back(shape.IsNull() ? shape : shape.Moved(location));
+    }
   }
 
   // Appends the triangulations of the faces (made by the mesher) to `mesh`.
@@ -197,10 +258,53 @@ IndexedMesh readCad(const QString& path, const CadDeflection& deflection, const 
   {
     if (progress) progress(0);
     TopoDS_Shape shape;
+    StepTree tree;
     if (step)
     {
-      STEPControl_Reader reader;
-      shape = readShape(reader, "STEP", utf8.constData(), cancel, progress);
+      // Through XCAF, which keeps the assembly structure and the names that
+      // STEPControl_Reader's OneShape() throws away.
+      STEPCAFControl_Reader reader;
+      reader.SetNameMode(true);
+      reader.SetColorMode(false);
+      reader.SetLayerMode(false);
+      reader.SetPropsMode(false);
+      reader.SetGDTMode(false);
+      reader.SetSHUOMode(false);
+      reader.SetMatMode(false);
+      reader.SetViewMode(false);
+      if (reader.ReadFile(utf8.constData()) != IFSelect_RetDone) throw std::runtime_error("Failed to read the STEP file");
+      throwIfCancelled(cancel);
+      if (progress) progress(5);
+      Handle(Message_ProgressIndicator) transfer = new ProgressBridge(cancel, progress, 5, 20);
+      Handle(TDocStd_Document) document = new TDocStd_Document("XmlXCAF");
+      if (!reader.Transfer(document, transfer->Start())) throw std::runtime_error("Failed to transfer the STEP file");
+      throwIfCancelled(cancel);
+
+      Handle(XCAFDoc_ShapeTool) shapeTool = XCAFDoc_DocumentTool::ShapeTool(document->Main());
+      TDF_LabelSequence roots;
+      shapeTool->GetFreeShapes(roots);
+      // A file with several roots gets a node of its own to hold them.
+      const bool several = roots.Length() > 1;
+      if (several)
+      {
+        tree.nodes.push_back({QFileInfo(path).completeBaseName(), -1, false, 0, 0});
+        tree.shapes.emplace_back();
+      }
+      for (Standard_Integer i = 1; i <= roots.Length(); ++i) walkLabel(roots.Value(i), TopLoc_Location(), several ? 0 : -1, tree, 0);
+
+      // The shape to mesh holds all the leaves.
+      BRep_Builder builder;
+      TopoDS_Compound all;
+      builder.MakeCompound(all);
+      for (const auto& leaf : tree.shapes)
+        if (!leaf.IsNull()) builder.Add(all, leaf);
+      shape = all;
+      if (!hasShapes(shape)) // no usable structure: the file as one shape
+      {
+        tree = StepTree();
+        shape = reader.Reader().OneShape();
+      }
+      if (!hasShapes(shape)) throw std::runtime_error("No transferable geometry found in the STEP file");
     }
     else
     {
@@ -221,7 +325,22 @@ IndexedMesh readCad(const QString& path, const CadDeflection& deflection, const 
     spdlog::info("Meshed {} with linear deflection {} and angular deflection {}", path.toStdString(), deflection.linear, deflection.angular);
 
     IndexedMesh mesh;
-    extractFaces(shape, mesh);
+    if (tree.nodes.empty())
+      extractFaces(shape, mesh);
+    else
+    {
+      // Leaf by leaf, so that each owns a range of the triangles.
+      for (size_t i = 0; i < tree.nodes.size(); ++i)
+      {
+        throwIfCancelled(cancel);
+        PartNode& node = tree.nodes[i];
+        node.firstTriangle = static_cast<uint32_t>(mesh.triangles.size());
+        if (node.leaf && !tree.shapes[i].IsNull()) extractFaces(tree.shapes[i], mesh);
+        node.endTriangle = static_cast<uint32_t>(mesh.triangles.size());
+      }
+      mesh.parts = std::move(tree.nodes);
+      pruneParts(mesh.parts);
+    }
     throwIfCancelled(cancel);
     if (mesh.triangles.empty()) throw std::runtime_error("The CAD file produced no triangles");
     if (progress) progress(100);

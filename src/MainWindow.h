@@ -19,6 +19,7 @@ class SceneSettingsDialog;
 class QCloseEvent;
 class QDockWidget;
 class QMenu;
+class PartsPanel;
 class ThumbnailBrowser;
 class ThumbnailService;
 class Viewport3D;
@@ -53,6 +54,9 @@ class MainWindow : public QMainWindow
     // The model `path` could not be shown: on to the next one in the direction
     // that was being stepped through, if any.
     void skipFailed(const QString& path, int direction);
+    // The pane of the parts follows the model: shown (if the user wants it)
+    // when the model has a hierarchy, hidden when it has not.
+    void showPartsOfModel();
     void showDirectory(const QString& path);
     void goAdjacent(int delta);
     void reload();
@@ -70,6 +74,9 @@ class MainWindow : public QMainWindow
     ThumbnailService* m_Service = nullptr;
     ThumbnailBrowser* m_Browser = nullptr;
     QDockWidget* m_BrowserDock = nullptr;
+    PartsPanel* m_PartsPanel = nullptr;
+    QDockWidget* m_PartsDock = nullptr;
+    bool m_UpdatingPartsDock = false; // shown or hidden by showPartsOf(), not by the user
     QMenu* m_RecentMenu = nullptr;
     QAction* m_CopyAction = nullptr;
     QString m_CurrentFile;

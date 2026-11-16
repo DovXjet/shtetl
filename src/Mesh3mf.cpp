@@ -82,6 +82,7 @@ namespace
   {
     std::vector<vsg::vec3> vertices;
     std::vector<vsg::uivec3> triangles;
+    QString name;
     int pid = -1, pindex = 0;            // the object's color
     std::vector<int> trianglePid;        // per triangle, -1 for the object's
     std::vector<int> trianglePindex;     // (the first vertex's, if it has its own)
@@ -99,19 +100,38 @@ namespace
     return 1.0; // millimeter, the default
   }
 
-  void instantiate(const std::map<int, Object>& objects, int id, const Transform& transform, IndexedMesh& out, int depth)
+  // Adds the object (with its components, transformed) to `out`, and to the
+  // hierarchy as a child of `parent`.
+  void instantiate(const std::map<int, Object>& objects, int id, const Transform& transform, IndexedMesh& out, int depth, int parent)
   {
     auto it = objects.find(id);
     if (it == objects.end() || depth > 32) return;
     const Object& object = it->second;
+
+    const QString name = object.name.isEmpty() ? QString("Object %1").arg(id) : object.name;
+    const int node = static_cast<int>(out.parts.size());
+    out.parts.push_back({name, parent, false, uint32_t(out.triangles.size()), uint32_t(out.triangles.size())});
 
     const uint32_t base = static_cast<uint32_t>(out.vertices.size());
     for (const auto& v : object.vertices) out.vertices.push_back(transform.apply(v));
     for (const auto& t : object.triangles) out.triangles.emplace_back(t.x + base, t.y + base, t.z + base);
     out.triangleColors.resize(out.triangles.size() - object.triangles.size(), 0);
     out.triangleColors.insert(out.triangleColors.end(), object.triangleColors.begin(), object.triangleColors.end());
-    for (const auto& c : object.components)
-      instantiate(objects, c.objectId, Transform::compose(c.transform, transform), out, depth + 1);
+
+    // The object's own triangles are a leaf: the object itself if it has no
+    // components, else a child of it before them.
+    const uint32_t first = out.parts[size_t(node)].firstTriangle, end = uint32_t(out.triangles.size());
+    if (object.components.empty())
+    {
+      out.parts[size_t(node)].leaf = true;
+      out.parts[size_t(node)].endTriangle = end;
+    }
+    else
+    {
+      if (end > first) out.parts.push_back({name + " (mesh)", node, true, first, end});
+      for (const auto& c : object.components)
+        instantiate(objects, c.objectId, Transform::compose(c.transform, transform), out, depth + 1, node);
+    }
   }
 } // namespace
 
@@ -144,6 +164,30 @@ namespace
     return data;
   }
 } // namespace
+
+void pruneParts(std::vector<PartNode>& parts)
+{
+  // Groups with nothing in them, and leaves without triangles, are of no use.
+  std::vector<char> keep(parts.size(), 0);
+  for (size_t i = parts.size(); i-- > 0;)
+  {
+    if (parts[i].leaf && parts[i].endTriangle > parts[i].firstTriangle) keep[i] = 1;
+    if (keep[i] && parts[i].parent >= 0) keep[size_t(parts[i].parent)] = 1;
+  }
+  std::vector<int> remap(parts.size(), -1);
+  std::vector<PartNode> kept;
+  for (size_t i = 0; i < parts.size(); ++i)
+    if (keep[i])
+    {
+      remap[i] = static_cast<int>(kept.size());
+      kept.push_back(parts[i]);
+      kept.back().parent = parts[i].parent >= 0 ? remap[size_t(parts[i].parent)] : -1;
+    }
+  // With a single part there is nothing to choose between.
+  const auto leaves = std::count_if(kept.begin(), kept.end(), [](const PartNode& n) { return n.leaf; });
+  if (leaves < 2) kept.clear();
+  parts.swap(kept);
+}
 
 IndexedMesh read3MF(const QString& path, const std::atomic<bool>* cancel)
 {
@@ -191,6 +235,7 @@ IndexedMesh read3MF(const QString& path, const std::atomic<bool>* cancel)
       else if (name == u"object")
       {
         current = &objects[a.value("id").toInt()];
+        current->name = a.value("name").toString();
         if (a.hasAttribute("pid"))
         {
           current->pid = a.value("pid").toInt();
@@ -250,7 +295,8 @@ IndexedMesh read3MF(const QString& path, const std::atomic<bool>* cancel)
   IndexedMesh mesh;
   if (buildItems.empty()) // no build section: everything there is
     for (const auto& [id, object] : objects) buildItems.push_back({id, Transform()});
-  for (const auto& item : buildItems) instantiate(objects, item.objectId, item.transform, mesh, 0);
+  for (const auto& item : buildItems) instantiate(objects, item.objectId, item.transform, mesh, 0, -1);
+  pruneParts(mesh.parts);
 
   if (std::all_of(mesh.triangleColors.begin(), mesh.triangleColors.end(), [](uint32_t c) { return c == 0; })) mesh.triangleColors.clear();
 

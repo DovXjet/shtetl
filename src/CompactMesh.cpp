@@ -131,6 +131,27 @@ namespace
       config->pipelineStates.push_back(vsg::ColorBlendState::create(std::vector<VkPipelineColorBlendAttachmentState>(3, attachment)));
     }
 
+    if (source.blend && !gbuffer)
+    {
+      // Reverse Z, as the edges: a see-through part is hidden by what is in front
+      // of it, and hides nothing itself.
+      auto depthStencil = vsg::DepthStencilState::create();
+      depthStencil->depthTestEnable = VK_TRUE;
+      depthStencil->depthWriteEnable = VK_FALSE;
+      depthStencil->depthCompareOp = VK_COMPARE_OP_GREATER_OR_EQUAL;
+      config->pipelineStates.push_back(depthStencil);
+      VkPipelineColorBlendAttachmentState attachment{};
+      attachment.blendEnable = VK_TRUE;
+      attachment.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
+      attachment.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+      attachment.colorBlendOp = VK_BLEND_OP_ADD;
+      attachment.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+      attachment.dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
+      attachment.alphaBlendOp = VK_BLEND_OP_ADD;
+      attachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+      config->pipelineStates.push_back(vsg::ColorBlendState::create(std::vector<VkPipelineColorBlendAttachmentState>{attachment}));
+    }
+
     vsg::StateCommands stateCommands;
     config->init();
     config->copyTo(stateCommands);
@@ -338,7 +359,7 @@ LoadedModel load3MF(const QString& path, const std::atomic<bool>* cancel, const 
     color = vsg::vec4(linear(c & 0xFF), linear((c >> 8) & 0xFF), linear((c >> 16) & 0xFF), diffuse.a);
     perTriangle = false;
   }
-  return pack(mesh.triangles.size(), [&mesh](size_t i, vsg::vec3* p) {
+  LoadedModel model = pack(mesh.triangles.size(), [&mesh](size_t i, vsg::vec3* p) {
     for (int v = 0; v < 3; ++v) p[v] = mesh.vertices[mesh.triangles[i][v]];
   }, cancel, color, progress, perTriangle ? &mesh.triangleColors : nullptr);
 }
@@ -346,6 +367,8 @@ LoadedModel load3MF(const QString& path, const std::atomic<bool>* cancel, const 
 namespace
 {
   // vsgXchange reads a .glb only when the length of its binary chunk is exactly
+  model.parts = mesh.parts;
+  return model;
   // the byteLength of its first buffer, but the spec has the chunk padded to a
   // multiple of 4 bytes, which exporters such as Sketchfab's do: no mesh and no
   // animation data is read then. Reads such a file with the length of the chunk
@@ -464,7 +487,7 @@ LoadedModel loadCad(const QString& path, const std::atomic<bool>* cancel, const 
     if (progress) progress(70 + p * 30 / 100);
   };
   const IndexedMesh mesh = readCad(path, cadDeflectionFromSettings(), cancel, readProgress);
-  return pack(mesh.triangles.size(), [&mesh](size_t i, vsg::vec3* p) {
+  LoadedModel model = pack(mesh.triangles.size(), [&mesh](size_t i, vsg::vec3* p) {
     for (int v = 0; v < 3; ++v) p[v] = mesh.vertices[mesh.triangles[i][v]];
   }, cancel, diffuse, packProgress);
 }
@@ -472,6 +495,8 @@ LoadedModel loadCad(const QString& path, const std::atomic<bool>* cancel, const 
 
 LoadedModel loadModel(const QString& path, vsg::ref_ptr<vsg::Options> options, const std::atomic<bool>* cancel, const vsg::vec4& diffuse,
                      const LoadProgress& progress)
+  model.parts = mesh.parts;
+  return model;
 {
   const QString ext = QFileInfo(path).suffix().toLower();
   if (ext == "stl") return loadStl(path, cancel, diffuse, progress);

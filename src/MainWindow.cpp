@@ -6,6 +6,7 @@
 #include "Logging.h"
 #include "NavigationStyles.h"
 #include "OpenFileDialog.h"
+#include "PartsPanel.h"
 #include "SceneSettingsDialog.h"
 #include "Preferences.h"
 #include "ThumbnailBrowser.h"
@@ -81,6 +82,35 @@ MainWindow::MainWindow()
 
   connect(m_Browser, &ThumbnailBrowser::fileSelected, this, &MainWindow::loadModel);
 
+  // The hierarchy of a 3MF or STEP file, to show and hide its parts.
+  m_PartsPanel = new PartsPanel(this);
+  m_PartsDock = new QDockWidget("Parts", this);
+  m_PartsDock->setObjectName("PartsDock");
+  m_PartsDock->setWidget(m_PartsPanel);
+  addDockWidget(Qt::RightDockWidgetArea, m_PartsDock);
+  resizeDocks({m_PartsDock}, {260}, Qt::Horizontal);
+  m_PartsDock->hide(); // until a model with parts is shown
+  connect(m_PartsPanel, &PartsPanel::statesChanged, m_Viewport, &Viewport3D::setPartStates);
+  connect(m_PartsPanel, &PartsPanel::statusMessage, this, [this](const QString& text) { statusBar()->showMessage(text, 4000); });
+  {
+    // The random colors are the panel's; the setting keeps them for the next run.
+    const QSettings saved;
+    const bool random = saved.value("View/RandomPartColors", false).toBool();
+    const unsigned seed = saved.value("View/RandomPartColorSeed", 0).toUInt();
+    m_PartsPanel->setRandomColors(random, seed);
+    m_Viewport->setRandomPartColors(random, seed);
+  }
+  connect(m_PartsPanel, &PartsPanel::randomColorsChanged, this, [this](bool on, unsigned seed) {
+    QSettings settings;
+    settings.setValue("View/RandomPartColors", on);
+    settings.setValue("View/RandomPartColorSeed", seed);
+    m_Viewport->setRandomPartColors(on, seed);
+  });
+  // Closing the pane with its own button is the user's choice too.
+  connect(m_PartsDock, &QDockWidget::visibilityChanged, this, [this](bool visible) {
+    if (!m_UpdatingPartsDock && isVisible() && !m_PartsPanel->isEmpty()) QSettings().setValue("View/Parts", visible);
+  });
+
   // Right-click in the 3D view: the Edit > Copy action (set up in createMenus()).
   connect(m_Viewport, &Viewport3D::stepRequested, this, &MainWindow::goAdjacent);
   connect(m_Viewport, &Viewport3D::contextMenuRequested, this, [this](const QPoint& pos) {
@@ -146,6 +176,14 @@ MainWindow::~MainWindow()
   // before the viewport (and the device) is destroyed.
   delete m_Service;
   m_Service = nullptr;
+}
+
+void MainWindow::showPartsOfModel()
+{
+  m_PartsPanel->setParts(m_Viewport->parts());
+  m_UpdatingPartsDock = true;
+  m_PartsDock->setVisible(!m_PartsPanel->isEmpty() && QSettings().value("View/Parts", true).toBool());
+  m_UpdatingPartsDock = false;
 }
 
 void MainWindow::saveWindowSettings()
@@ -289,6 +327,14 @@ void MainWindow::createMenus()
   connect(dockAction, &QAction::triggered, this, [this](bool show) {
     QSettings().setValue("View/Thumbnails", show);
     statusBar()->showMessage(QString("Thumbnails: ") + (show ? "shown" : "hidden"), 3000);
+  });
+  auto* partsAction = m_PartsDock->toggleViewAction();
+  partsAction->setText("Parts");
+  partsAction->setShortcut(QKeySequence("F10"));
+  viewMenu->addAction(partsAction);
+  connect(partsAction, &QAction::triggered, this, [this](bool show) {
+    QSettings().setValue("View/Parts", show);
+    statusBar()->showMessage(QString("Parts: ") + (show ? "shown" : "hidden"), 3000);
   });
   viewMenu->addSeparator();
 
@@ -622,6 +668,7 @@ void MainWindow::onModelLoaded(quint64 id, const QString& path, LoadedModel mode
 
   spdlog::info("Loaded {} in {} ms", path.toStdString(), m_LoadTime.elapsed());
   m_CurrentFile = path;
+  showPartsOfModel();
   m_CopyAction->setEnabled(true);
   setWindowTitle("shtetl: " + QFileInfo(path).fileName());
   const vsg::dvec3 size = m_Viewport->modelBounds().max - m_Viewport->modelBounds().min;

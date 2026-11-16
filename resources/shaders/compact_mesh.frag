@@ -54,7 +54,10 @@ void main()
     Kd += max(dot(L, N), 0.0) * lightStrength1;
     Ks += pow(max(dot(R, V), 0.0), material.shininess) * lightStrength1;
 
-    outColor = vec4(material.ambientColor.xyz
+    // The ambient light is reflected by the color too: a dark file color
+    // (relative to the model's) must not be lifted to a flat grey by it.
+    vec3 ambient = material.ambientColor.xyz * clamp(base / max(material.diffuseColor.xyz, vec3(1e-3)), 0.0, 1.0);
+    outColor = vec4(ambient
                     + base * Kd * 0.7
                     + material.specularColor.xyz * Ks * 0.02,
                     material.diffuseColor.w);
