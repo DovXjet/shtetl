@@ -466,6 +466,7 @@ void MainWindow::createMenus()
   auto* ortho = viewMenu->addAction("Orthographic\tNumpad 5");
   ortho->setCheckable(true);
   connect(ortho, &QAction::toggled, m_Viewport, &Viewport3D::setOrthographic);
+  connect(m_Viewport, &Viewport3D::statusMessage, this, [this](const QString& text) { statusBar()->showMessage(text, 6000); });
   connect(m_Viewport, &Viewport3D::projectionChanged, ortho, &QAction::setChecked);
   connect(m_Viewport, &Viewport3D::projectionChanged, this, [](bool on) { QSettings().setValue("View/Orthographic", on); });
   ortho->setChecked(settings.value("View/Orthographic", false).toBool());
@@ -498,6 +499,13 @@ void MainWindow::createMenus()
   // As vgiv's Next/Previous Image.
   m_NextAction = viewMenu->addAction("Next Model", this, [this]() { goAdjacent(+1); });
   m_PreviousAction = viewMenu->addAction("Previous Model", this, [this]() { goAdjacent(-1); });
+  // Handled in Viewport3D::eventFilter() when the 3D view has the focus.
+  auto* spinLeft = viewMenu->addAction("Spin Left", this, [this]() { m_Viewport->spinStep(-1); });
+  spinLeft->setShortcut(QKeySequence("Ctrl+Left"));
+  auto* spinRight = viewMenu->addAction("Spin Right", this, [this]() { m_Viewport->spinStep(+1); });
+  spinRight->setShortcut(QKeySequence("Ctrl+Right"));
+  addAction(spinLeft);
+  addAction(spinRight);
 
   // A model with animations is played with Space, Left and Right (as in a media
   // player), which then don't step through the models; Shift+Down/Up, Backspace

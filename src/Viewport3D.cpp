@@ -614,6 +614,7 @@ void Viewport3D::buildSceneGraph()
   // Keep pumping frames while a viewpoint animation is interpolating. Queued:
   // this runs inside vsgQt::Viewer::render(), which would drop a direct request().
   m_Trackball->setRedrawRequestCallback([this]() { QMetaObject::invokeMethod(this, [this]() { m_Viewer->request(); }, Qt::QueuedConnection); });
+  m_Trackball->setStatusCallback([this](const QString& text) { QMetaObject::invokeMethod(this, [this, text]() { emit statusMessage(text); }, Qt::QueuedConnection); });
   addKeyViewpoints(center, vsg::length(lookAt->eye - lookAt->center));
 
   m_Gizmo = CCubeGizmo::create(m_Options, m_Camera, m_Trackball);
@@ -745,8 +746,21 @@ bool Viewport3D::eventFilter(QObject* watched, QEvent* event)
       if (!keyEvent->isAutoRepeat()) emit stepRequested(keyEvent->key() == Qt::Key_Right ? +1 : -1);
       return true;
     }
+    // Ctrl+Left / Ctrl+Right: the View menu's spin shortcuts.
+    if ((keyEvent->key() == Qt::Key_Left || keyEvent->key() == Qt::Key_Right) && keyEvent->modifiers() == Qt::ControlModifier)
+    {
+      spinStep(keyEvent->key() == Qt::Key_Right ? +1 : -1);
+      return true;
+    }
   }
   return QWidget::eventFilter(watched, event);
+}
+
+void Viewport3D::spinStep(int direction)
+{
+  if (!m_Trackball) return;
+  m_Trackball->spinStep(direction);
+  m_Viewer->request();
 }
 
 // Looks at the model from the top, the front or the right, filling the view as fitAll() does.

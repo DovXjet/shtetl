@@ -124,6 +124,9 @@ class Viewport3D : public QWidget
     void setNavigationStyle(NavigationStyle style);
     NavigationStyle navigationStyle() const { return m_NavigationStyle; }
 
+    // Spin the part around Z: +1 clockwise, -1 counterclockwise (adds to a running spin, see MyTrackball).
+    void spinStep(int direction);
+
     // Keeps the view direction and frames the whole model ("f" key).
     void fitAll(bool animate = true);
 
@@ -198,6 +201,8 @@ class Viewport3D : public QWidget
     void contextMenuRequested(const QPoint& globalPos);
     // Left / Right (+1 / -1 for next / previous) were pressed in the view.
     void stepRequested(int delta);
+    // A navigation action worth showing in the status bar.
+    void statusMessage(const QString& text);
 
   private:
     bool eventFilter(QObject* watched, QEvent* event) override;

@@ -12,6 +12,7 @@
 #include <vsg/maths/quat.h>
 
 #include <QGuiApplication>
+#include <QString>
 
 #include <algorithm>
 #include <chrono>
@@ -70,6 +71,10 @@ class MyTrackball : public vsg::Inherit<vsg::Trackball, MyTrackball>
 
         buttonPress.handled = _updateMode != INACTIVE;
 
+        if (_spinning) status("Spin stopped");
+        stopSpin();
+        _rateValid = false;
+
         _zoomPreviousRatio = 0.0;
         _pan.set(0.0, 0.0);
         _rotateAngle = 0.0;
@@ -86,6 +91,18 @@ class MyTrackball : public vsg::Inherit<vsg::Trackball, MyTrackball>
         if (supportsThrow) _thrown = _previousPointerEvent && (buttonRelease.time == _previousPointerEvent->time);
 
         _lastPointerEventWithinRenderArea = withinRenderArea(buttonRelease);
+
+        // Released while still moving fast: keep rotating at that speed.
+        if (_hasPointerFocus && _updateMode == ROTATE && _rateValid)
+        {
+            double sinceMove = std::chrono::duration<double>(buttonRelease.time - _lastMoveTime).count();
+            _spinAboutZ = false;
+            double speed = spinSpeed();
+            if (sinceMove < kSpinMaxIdle && speed > kSpinThreshold)
+            {
+                startSpin(false);
+            }
+        }
         _hasPointerFocus = false;
 
         _previousPointerEvent = &buttonRelease;
@@ -126,22 +143,10 @@ class MyTrackball : public vsg::Inherit<vsg::Trackball, MyTrackball>
                 // right under the cursor; drag down → tilt the top of the model
                 // toward the viewer.
                 vsg::dvec2 delta = new_ndc - prev_ndc;
-                const double rotGain = 3.14159265358979323846; // ~one screen width = π
-                double yawAngle = -delta.x * rotGain;
-                double pitchAngle = -delta.y * rotGain;
-
-                vsg::dvec3 toEye = _lookAt->eye - _lookAt->center;
-                toEye = vsg::dquat(yawAngle, _worldUp) * toEye;
-
-                // At the poles (looking straight along worldUp) right collapses
-                // to zero — skip pitch for that frame; the user can yaw out of
-                // the singularity.
-                vsg::dvec3 right = vsg::cross(-toEye, _worldUp);
-                double rightLen = vsg::length(right);
-                if (rightLen > 1e-9) toEye = vsg::dquat(pitchAngle, right / rightLen) * toEye;
-
-                _lookAt->eye = _lookAt->center + toEye;
-                _lookAt->up = _worldUp;
+                double yawAngle = -delta.x * kTurntableGain;
+                double pitchAngle = -delta.y * kTurntableGain;
+                turntableRotate(yawAngle, pitchAngle);
+                trackRate(yawAngle, pitchAngle, 0.0, dt, moveEvent.time);
 
                 _rotateAngle = std::abs(yawAngle) + std::abs(pitchAngle);
                 _rotateAxis = _worldUp;
@@ -155,10 +160,12 @@ class MyTrackball : public vsg::Inherit<vsg::Trackball, MyTrackball>
                     _rotateAngle = std::asin(xp_len);
                     _rotateAxis = xp / xp_len;
                     rotate(_rotateAngle, _rotateAxis);
+                    trackRate(0.0, 0.0, _rotateAngle, dt, moveEvent.time);
                 }
                 else
                 {
                     _rotateAngle = 0.0;
+                    trackRate(0.0, 0.0, 0.0, dt, moveEvent.time);
                 }
             }
         }
@@ -199,6 +206,7 @@ class MyTrackball : public vsg::Inherit<vsg::Trackball, MyTrackball>
     void setViewpoint(vsg::ref_ptr<vsg::LookAt> lookAt, double duration = 1.0)
     {
         _zoomActive = false;
+        stopSpin();
         _previousTime = vsg::clock::now();
         vsg::Inherit<vsg::Trackball, MyTrackball>::setViewpoint(lookAt, duration);
     }
@@ -218,8 +226,9 @@ class MyTrackball : public vsg::Inherit<vsg::Trackball, MyTrackball>
         vsg::Inherit<vsg::Trackball, MyTrackball>::apply(frame);
 
         advanceZoom();
+        advanceSpin();
 
-        if ((isAnimatingViewpoint() || _zoomActive) && m_RedrawRequestCallback) m_RedrawRequestCallback();
+        if ((isAnimatingViewpoint() || _zoomActive || _spinning) && m_RedrawRequestCallback) m_RedrawRequestCallback();
     }
 
     // Wheel zoom as a short eased motion (profile copied from vgiv's
@@ -242,6 +251,66 @@ class MyTrackball : public vsg::Inherit<vsg::Trackball, MyTrackball>
         if (m_RedrawRequestCallback) m_RedrawRequestCallback();
     }
 
+    // + / - (main row or keypad). Not spinning: + spins the part clockwise
+    // around its Z axis (seen from above), - counterclockwise. Spinning around
+    // Z: each press adds to the clockwise / counterclockwise speed, so the
+    // opposite key slows the part down, stops it and then reverses it.
+    // Spinning from a drag: + / - scale the speed.
+    void spinStep(int direction)
+    {
+        const bool plus = direction > 0;
+        if (!_spinning || _spinAboutZ)
+        {
+            // Positive rate orbits the eye counterclockwise, which turns
+            // the part clockwise as seen from above.
+            double rate = (_spinning ? _rateYaw : 0.0) + (plus ? kSpinZStep : -kSpinZStep);
+            _ratePitch = _rateAngle = 0.0;
+            if (std::abs(rate) < 0.5 * kSpinZStep)
+            {
+                stopSpin();
+                status("Spin stopped");
+            }
+            else
+            {
+                _rateYaw = rate;
+                if (!_spinning)
+                    startSpin(true);
+                else
+                    status(spinMessage());
+            }
+        }
+        else
+        {
+            double factor = plus ? kSpinStep : 1.0 / kSpinStep;
+            _rateYaw *= factor;
+            _ratePitch *= factor;
+            _rateAngle *= factor;
+            status(spinMessage());
+        }
+    }
+
+    void apply(vsg::KeyPressEvent& keyPress) override
+    {
+        if (!keyPress.handled)
+        {
+            const vsg::KeySymbol keys[] = {keyPress.keyBase, keyPress.keyModified};
+            for (auto key : keys)
+            {
+                bool plus = key == vsg::KEY_Plus || key == vsg::KEY_Equals || key == vsg::KEY_KP_Add;
+                bool minus = key == vsg::KEY_Minus || key == vsg::KEY_KP_Subtract;
+                if (!plus && !minus) continue;
+
+                spinStep(plus ? +1 : -1);
+                keyPress.handled = true;
+                return;
+            }
+        }
+        vsg::Inherit<vsg::Trackball, MyTrackball>::apply(keyPress);
+    }
+
+    // Short description of what just happened, for the host's status bar.
+    void setStatusCallback(std::function<void(const QString&)> cb) { m_StatusCallback = std::move(cb); }
+
     std::set<uint32_t> zoomButtonMasks;
     std::set<uint32_t> panButtonMasks;
     std::set<uint32_t> rotateButtonMasks;
@@ -258,6 +327,104 @@ class MyTrackball : public vsg::Inherit<vsg::Trackball, MyTrackball>
         if (modifiers & Qt::AltModifier) result |= vsg::MODKEY_Alt;
         return result;
     }
+
+    // Yaw around world-up, pitch around the post-yaw camera-right. The eye
+    // orbits the lookAt center; up is forced to worldUp every frame so the
+    // world can never roll. Drag right → world rotates right under the cursor;
+    // drag down → tilt the top of the model toward the viewer.
+    void turntableRotate(double yawAngle, double pitchAngle)
+    {
+        vsg::dvec3 toEye = _lookAt->eye - _lookAt->center;
+        toEye = vsg::dquat(yawAngle, _worldUp) * toEye;
+
+        // At the poles (looking straight along worldUp) right collapses to
+        // zero — skip pitch for that frame; the user can yaw out of the
+        // singularity.
+        vsg::dvec3 right = vsg::cross(-toEye, _worldUp);
+        double rightLen = vsg::length(right);
+        if (rightLen > 1e-9) toEye = vsg::dquat(pitchAngle, right / rightLen) * toEye;
+
+        _lookAt->eye = _lookAt->center + toEye;
+        _lookAt->up = _worldUp;
+    }
+
+    // Smoothed angular velocity of the current rotate drag (rad/s), used to
+    // continue the rotation after a fast release.
+    void trackRate(double yaw, double pitch, double angle, double dt, vsg::time_point when)
+    {
+        _lastMoveTime = when;
+        if (dt < 1e-4) return;
+        double blend = _rateValid ? 0.5 : 1.0;
+        _rateYaw += blend * (yaw / dt - _rateYaw);
+        _ratePitch += blend * (pitch / dt - _ratePitch);
+        _rateAngle += blend * (angle / dt - _rateAngle);
+        _rateValid = true;
+    }
+
+    void status(const QString& text)
+    {
+        if (m_StatusCallback) m_StatusCallback(text);
+    }
+
+    double spinSpeed() const
+    {
+        if (_spinAboutZ) return std::abs(_rateYaw);
+        return _rotationModel == RotationModel::Turntable ? std::hypot(_rateYaw, _ratePitch) : std::abs(_rateAngle);
+    }
+
+    QString spinMessage() const
+    {
+        QString what = "Spinning";
+        if (_spinAboutZ) what += _rateYaw > 0.0 ? " clockwise around Z" : " counterclockwise around Z";
+        return QString("%1 at %2 deg/s  (+ / - change the speed, click stops)").arg(what).arg(spinSpeed() * 180.0 / M_PI, 0, 'f', 0);
+    }
+
+    void startSpin(bool aboutZ)
+    {
+        _spinAboutZ = aboutZ;
+        _spinning = true;
+        _spinLast = std::chrono::steady_clock::now();
+        if (m_RedrawRequestCallback) m_RedrawRequestCallback();
+        status(spinMessage());
+    }
+
+    // Rotate eye and up around the world-up axis through the lookAt center.
+    void spinAboutWorldUp(double angle)
+    {
+        vsg::dquat q(angle, _worldUp);
+        _lookAt->eye = _lookAt->center + q * (_lookAt->eye - _lookAt->center);
+        _lookAt->up = q * _lookAt->up;
+    }
+
+    void stopSpin() { _spinning = false; }
+
+    void advanceSpin()
+    {
+        if (!_spinning) return;
+        auto now = std::chrono::steady_clock::now();
+        double dt = std::min(std::chrono::duration<double>(now - _spinLast).count(), 0.1);
+        _spinLast = now;
+        if (_spinAboutZ)
+            spinAboutWorldUp(_rateYaw * dt);
+        else if (_rotationModel == RotationModel::Turntable)
+            turntableRotate(_rateYaw * dt, _ratePitch * dt);
+        else
+            rotate(_rateAngle * dt, _rotateAxis);
+    }
+
+    static constexpr double kTurntableGain = 3.14159265358979323846; // ~one screen width = π
+    static constexpr double kSpinThreshold = 1.0;                    // rad/s needed at release to keep spinning
+    static constexpr double kSpinStep = 1.25;                        // speed factor per +/- press
+    static constexpr double kSpinMaxIdle = 0.08;                     // s between last move and release
+
+    static constexpr double kSpinZStep = 0.5;                        // rad/s added per +/- press when spinning around Z
+
+    bool _spinning = false;
+    bool _spinAboutZ = false;
+    bool _rateValid = false;
+    double _rateYaw = 0.0, _ratePitch = 0.0, _rateAngle = 0.0;
+    vsg::time_point _lastMoveTime;
+    std::chrono::steady_clock::time_point _spinLast;
 
     // Trapezoidal-velocity ease: accelerate over the first quarter, cruise,
     // decelerate over the last quarter. u and result are in [0,1].
@@ -292,6 +459,7 @@ class MyTrackball : public vsg::Inherit<vsg::Trackball, MyTrackball>
     std::chrono::steady_clock::time_point _zoomStart;
 
     std::function<void()> m_RedrawRequestCallback;
+    std::function<void(const QString&)> m_StatusCallback;
 
     RotationModel _rotationModel = RotationModel::Trackball;
     vsg::dvec3 _worldUp = vsg::dvec3(0.0, 0.0, 1.0);
