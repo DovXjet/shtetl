@@ -81,6 +81,9 @@ ThumbnailBrowser::ThumbnailBrowser(ThumbnailService* service, QWidget* parent) :
   m_PathCombo->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
   m_PathCombo->setMinimumContentsLength(8);
   m_PathCombo->setToolTip("The directory: type a path, or choose a parent, the home directory or a recent one");
+  m_RefreshButton = new QToolButton(this);
+  m_RefreshButton->setIcon(refreshIcon());
+  m_RefreshButton->setToolTip("Refresh the thumbnails of this directory");
   m_SmallerButton = new QToolButton(this);
   m_SmallerButton->setIcon(magnifierIcon(false));
   m_SmallerButton->setToolTip("Smaller thumbnails (Ctrl+-)");
@@ -92,6 +95,7 @@ ThumbnailBrowser::ThumbnailBrowser(ThumbnailService* service, QWidget* parent) :
   bar->addWidget(m_ForwardButton);
   bar->addWidget(m_UpButton);
   bar->addWidget(m_PathCombo, 1);
+  bar->addWidget(m_RefreshButton);
   bar->addWidget(m_SmallerButton);
   bar->addWidget(m_LargerButton);
   layout->addLayout(bar);
@@ -150,6 +154,10 @@ ThumbnailBrowser::ThumbnailBrowser(ThumbnailService* service, QWidget* parent) :
   connect(m_PathCombo, &QComboBox::activated, this, [this](int index) {
     const QString path = m_PathCombo->itemData(index).toString();
     if (!path.isEmpty()) setDirectory(path);
+  });
+  connect(m_RefreshButton, &QToolButton::clicked, this, [this]() {
+    const QStringList paths = m_Items.keys();
+    for (const QString& p : paths) refreshThumbnail(p);
   });
   connect(m_SmallerButton, &QToolButton::clicked, this, [this]() { stepIconSize(-1); });
   connect(m_LargerButton, &QToolButton::clicked, this, [this]() { stepIconSize(+1); });
@@ -258,6 +266,35 @@ QIcon ThumbnailBrowser::magnifierIcon(bool plus) const
   painter.setPen(pen);
   painter.drawLine(QPointF(17, 26), QPointF(35, 26));
   if (plus) painter.drawLine(QPointF(26, 17), QPointF(26, 35));
+  return QIcon(pixmap);
+}
+
+// A circular arrow, in the text color and drawn like the magnifiers.
+QIcon ThumbnailBrowser::refreshIcon() const
+{
+  QPixmap pixmap(64, 64);
+  pixmap.fill(Qt::transparent);
+  QPainter painter(&pixmap);
+  painter.setRenderHint(QPainter::Antialiasing);
+  const QColor color = palette().color(QPalette::ButtonText);
+  QPen pen(color, 6, Qt::SolidLine, Qt::RoundCap);
+  painter.setPen(pen);
+
+  // Most of a circle, counter clockwise from 40 degrees; the head is at its end.
+  const QPointF center(32, 32);
+  const double radius = 22;
+  const double start = 40, span = 280;
+  painter.drawArc(QRectF(center.x() - radius, center.y() - radius, 2 * radius, 2 * radius), int(start * 16), int(span * 16));
+
+  const double end = (start + span) * M_PI / 180.0;
+  const QPointF tip = center + QPointF(radius * std::cos(end), -radius * std::sin(end));
+  const QPointF along(-std::sin(end), -std::cos(end)); // the way the arc goes there
+  const QPointF across(std::cos(end), -std::sin(end));
+  QPolygonF head;
+  head << tip + along * 12 << tip + across * 11 << tip - across * 11;
+  painter.setPen(Qt::NoPen);
+  painter.setBrush(color);
+  painter.drawPolygon(head);
   return QIcon(pixmap);
 }
 

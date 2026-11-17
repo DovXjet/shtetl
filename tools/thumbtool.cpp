@@ -11,6 +11,7 @@
 #include <QFileInfo>
 #include <QImage>
 
+#include <chrono>
 #include <cmath>
 #include <iostream>
 
@@ -56,7 +57,11 @@ int main(int argc, char** argv)
     if (ext == "stl") color = rgb(1.0f, 0.8f, 0.8f);
     if (ext == "3mf") color = rgb(0.8f, 1.0f, 0.8f);
 
+    using Clock = std::chrono::steady_clock;
+    auto msSince = [](Clock::time_point t) { return std::chrono::duration<double, std::milli>(Clock::now() - t).count(); };
+    const auto loadStart = Clock::now();
     LoadedModel model = loadModel(path, createModelOptions(), nullptr, color);
+    std::cout << "load " << msSince(loadStart) << " ms\n";
     if (pbr && model.compact)
     {
       model.compact.pbr = true;
@@ -65,8 +70,16 @@ int main(int argc, char** argv)
       model.node = makeCompactNode(model.compact);
     }
     const bool environmentLit = environment && (lightWithEnvironment(*model.node) || pbr);
+    const auto renderStart = Clock::now();
     auto data = renderer.render(model.node, model.bounds, environmentLit);
+    std::cout << "render " << msSince(renderStart) << " ms\n";
     if (!data) throw std::runtime_error("The render failed");
+    for (int again = 0; again < 2; ++again) // steady state: the renderer's one-time setup is paid
+    {
+      const auto t2 = Clock::now();
+      renderer.render(model.node, model.bounds, environmentLit);
+      std::cout << "render again " << msSince(t2) << " ms\n";
+    }
     if (!thumbnailImage(*data).save(QString::fromLocal8Bit(argv[2]), "PNG")) throw std::runtime_error("Could not save the image");
     std::cout << (environmentLit ? "environment lit" : "studio lit") << "\n";
   }

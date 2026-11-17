@@ -185,21 +185,26 @@ namespace
     vsg::vec3 lo(1e30f, 1e30f, 1e30f), hi(-1e30f, -1e30f, -1e30f);
     // The bounds are the first half of the work, the encoding the second.
     const size_t boundsChunk = std::max<size_t>(10000, faces / 100);
-    for (size_t i = 0; i < faces; ++i)
+    for (size_t start = 0; start < faces; start += boundsChunk)
     {
-      if (i % boundsChunk == 0)
+      if (cancel && cancel->load()) throw std::runtime_error("Abort requested!");
+      if (progress) progress(static_cast<int>(start * 50 / faces));
+      const int64_t end = static_cast<int64_t>(std::min(start + boundsChunk, faces));
+      float clo[3] = {lo.x, lo.y, lo.z}, chi[3] = {hi.x, hi.y, hi.z};
+#pragma omp parallel for schedule(static) reduction(min : clo[0 : 3]) reduction(max : chi[0 : 3])
+      for (int64_t i = static_cast<int64_t>(start); i < end; ++i)
       {
-        if (cancel && cancel->load()) throw std::runtime_error("Abort requested!");
-        if (progress) progress(static_cast<int>(i * 50 / faces));
+        vsg::vec3 p[3];
+        getTriangle(static_cast<size_t>(i), p);
+        for (const auto& v : p)
+          for (int k = 0; k < 3; ++k)
+          {
+            clo[k] = std::min(clo[k], v[k]);
+            chi[k] = std::max(chi[k], v[k]);
+          }
       }
-      vsg::vec3 p[3];
-      getTriangle(i, p);
-      for (const auto& v : p)
-        for (int k = 0; k < 3; ++k)
-        {
-          lo[k] = std::min(lo[k], v[k]);
-          hi[k] = std::max(hi[k], v[k]);
-        }
+      lo = vsg::vec3(clo[0], clo[1], clo[2]);
+      hi = vsg::vec3(chi[0], chi[1], chi[2]);
     }
     if (!std::isfinite(lo.x + lo.y + lo.z + hi.x + hi.y + hi.z)) throw std::runtime_error("The mesh has non-finite coordinates");
 
@@ -362,13 +367,13 @@ LoadedModel load3MF(const QString& path, const std::atomic<bool>* cancel, const 
   LoadedModel model = pack(mesh.triangles.size(), [&mesh](size_t i, vsg::vec3* p) {
     for (int v = 0; v < 3; ++v) p[v] = mesh.vertices[mesh.triangles[i][v]];
   }, cancel, color, progress, perTriangle ? &mesh.triangleColors : nullptr);
+  model.parts = mesh.parts;
+  return model;
 }
 
 namespace
 {
   // vsgXchange reads a .glb only when the length of its binary chunk is exactly
-  model.parts = mesh.parts;
-  return model;
   // the byteLength of its first buffer, but the spec has the chunk padded to a
   // multiple of 4 bytes, which exporters such as Sketchfab's do: no mesh and no
   // animation data is read then. Reads such a file with the length of the chunk
@@ -490,13 +495,13 @@ LoadedModel loadCad(const QString& path, const std::atomic<bool>* cancel, const 
   LoadedModel model = pack(mesh.triangles.size(), [&mesh](size_t i, vsg::vec3* p) {
     for (int v = 0; v < 3; ++v) p[v] = mesh.vertices[mesh.triangles[i][v]];
   }, cancel, diffuse, packProgress);
+  model.parts = mesh.parts;
+  return model;
 }
 #endif
 
 LoadedModel loadModel(const QString& path, vsg::ref_ptr<vsg::Options> options, const std::atomic<bool>* cancel, const vsg::vec4& diffuse,
                      const LoadProgress& progress)
-  model.parts = mesh.parts;
-  return model;
 {
   const QString ext = QFileInfo(path).suffix().toLower();
   if (ext == "stl") return loadStl(path, cancel, diffuse, progress);

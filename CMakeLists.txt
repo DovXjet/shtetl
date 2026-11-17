@@ -136,6 +136,7 @@ endif()
 add_executable(thumbtool EXCLUDE_FROM_ALL
   tools/thumbtool.cpp
   src/ThumbnailRenderer.cpp
+  src/AmbientOcclusion.cpp
   src/CompactMesh.cpp
   src/Mesh3mf.cpp
   src/ModelFormats.cpp

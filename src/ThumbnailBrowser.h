@@ -77,6 +77,7 @@ class ThumbnailBrowser : public QWidget
     void updateNavigation();
     void fillDirectoryChoices();
     QIcon magnifierIcon(bool plus) const;
+    QIcon refreshIcon() const;
     QIcon placeholderIcon(const QString& text) const;
     QIcon folderIcon() const;
 
@@ -87,6 +88,7 @@ class ThumbnailBrowser : public QWidget
     QToolButton* m_ForwardButton = nullptr;
     QToolButton* m_UpButton = nullptr;
     QComboBox* m_PathCombo = nullptr; // the directory: editable, and its list jumps to others
+    QToolButton* m_RefreshButton = nullptr;
     QToolButton* m_SmallerButton = nullptr;
     QToolButton* m_LargerButton = nullptr;
     QStringList m_History;     // directories visited, oldest first
