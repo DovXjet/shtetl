@@ -1,0 +1,34 @@
+// The CORTAO filter pass: a sparse blur of the main pass' occlusion that follows
+// the depth and normal of the packed data (the defines and the CORTAO sources
+// are put in front of this by AmbientOcclusion.cpp). A thread does 2x2 pixels.
+
+layout(local_size_x = 8, local_size_y = 8) in;
+
+layout(binding = 0) uniform usampler2D samplerPacked;
+layout(binding = 1) uniform sampler2D samplerOcclusion;
+layout(binding = 2) uniform FilterBlock
+{
+    CORTAOFilterPassParameters p;
+} ubo;
+layout(binding = 3, r32f) uniform writeonly image2D outFiltered;
+
+// (textureGatherOffset wants constant offsets; these arrive as arguments.)
+cortao_uint4 cortao_gatherPackedData(cortao_float2 texCoords, cortao_int2 offset)
+{
+    return textureGather(samplerPacked, texCoords + vec2(offset) / vec2(textureSize(samplerPacked, 0)));
+}
+
+cortao_half4 cortao_gatherSSAO(cortao_float2 texCoords, cortao_int2 offset)
+{
+    return textureGather(samplerOcclusion, texCoords + vec2(offset) / vec2(textureSize(samplerOcclusion, 0)));
+}
+
+void cortao_writeFilterOutput(cortao_int2 pixelCoords, cortao_half ssao)
+{
+    imageStore(outFiltered, pixelCoords, vec4(ssao, 0.0, 0.0, 0.0));
+}
+
+void main()
+{
+    cortao_filterPass(gl_GlobalInvocationID.xy, ubo.p);
+}

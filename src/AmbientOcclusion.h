@@ -4,11 +4,23 @@
 
 #include <vector>
 
+// Which occlusion the passes compute: the Crytek-style hemisphere SSAO of
+// XjetStudio, CORTAO (circular occluder ray traced AO, compute shaders), or both.
+enum class OcclusionAlgorithm
+{
+  Ssao,
+  Cortao,
+  // Both, the darker of the two at each pixel: CORTAO for the creases it sees, and the
+  // SSAO for the steps in depth (walls seen edge-on), which CORTAO does not darken.
+  Hybrid
+};
+
 // Screen space ambient occlusion, as XjetStudio does it (ssao-pipeline.cpp),
 // reduced to what shtetl needs. Offscreen passes, in this order:
 //
 //   G-buffer  the model, drawn into position / normal / lit color targets
 //   SSAO      the occlusion of each pixel, from the position and normal
+//             (CORTAO: a prepass and a main pass, both compute shaders)
 //   blur      removes the noise of the SSAO pass
 //
 // the composition, which darkens the lit color by the occlusion, and FXAA
@@ -24,9 +36,13 @@ class AmbientOcclusion : public vsg::Inherit<vsg::Object, AmbientOcclusion>
     // `scene` is what the G-buffer pass draws; `camera` is the one of the
     // window, whose view and projection the passes follow. `radius` is the
     // reach of the occlusion in the units of the model.
-    AmbientOcclusion(vsg::ref_ptr<vsg::Device> device, vsg::ref_ptr<vsg::Camera> camera, vsg::ref_ptr<vsg::Node> scene, VkExtent2D extent, double radius, vsg::vec3 backgroundTop, vsg::vec3 backgroundBottom);
+    AmbientOcclusion(vsg::ref_ptr<vsg::Device> device, vsg::ref_ptr<vsg::Camera> camera, vsg::ref_ptr<vsg::Node> scene, VkExtent2D extent, double radius, vsg::vec3 backgroundTop, vsg::vec3 backgroundBottom,
+                     OcclusionAlgorithm algorithm = OcclusionAlgorithm::Ssao);
 
-    std::vector<vsg::ref_ptr<vsg::RenderGraph>> renderGraphs() const { return {m_GBufferGraph, m_SsaoGraph, m_BlurGraph, m_CompositionGraph}; }
+    // The passes, in the order of the command graph: render graphs, and for
+    // CORTAO also the compute dispatches and barriers between them.
+    const std::vector<vsg::ref_ptr<vsg::Node>>& renderGraphs() const { return m_Passes; }
+    OcclusionAlgorithm algorithm() const { return m_Algorithm; }
     vsg::ref_ptr<vsg::View> compositionView() const { return m_CompositionView; }
     // The camera of the composition: its viewport has to follow the window.
     vsg::ref_ptr<vsg::Camera> compositionCamera() const { return m_CompositionCamera; }
@@ -48,6 +64,11 @@ class AmbientOcclusion : public vsg::Inherit<vsg::Object, AmbientOcclusion>
     void updateProjection();
 
   private:
+    // The CORTAO passes (prepass, main pass, and the barriers between them), appended
+    // to m_Passes; returns the occlusion they write, for the blur to read.
+    vsg::ref_ptr<vsg::ImageInfo> createCortaoPasses(vsg::ref_ptr<vsg::Device> device, const std::vector<vsg::ref_ptr<vsg::ImageInfo>>& gbuffer);
+    void updateCortaoParams();
+
     struct SsaoParams
     {
         vsg::mat4 projection;
@@ -68,7 +89,28 @@ class AmbientOcclusion : public vsg::Inherit<vsg::Object, AmbientOcclusion>
     VkExtent2D m_Extent;
     vsg::ref_ptr<vsg::Value<SsaoParams>> m_SsaoParams;
     vsg::ref_ptr<vsg::Value<CompositionParams>> m_CompositionParams;
-    vsg::ref_ptr<vsg::RenderGraph> m_GBufferGraph, m_SsaoGraph, m_BlurGraph, m_CompositionGraph;
+    OcclusionAlgorithm m_Algorithm;
+    std::vector<vsg::ref_ptr<vsg::Node>> m_Passes;
+    // CORTAO: the parameters of the main pass (they follow the projection), and
+    // the choice between its perspective and orthographic variants.
+    struct CortaoMainParams // CORTAOMainPassParameters
+    {
+        uint32_t packedResolution = 0;
+        uint32_t randomSeed = 0;
+        float normalBias = 0.0f;
+        float radius = 1.0f;
+        vsg::vec4 unproject;
+        vsg::vec4 projection;
+        float maxApparentCircleRadiusCoefficient = 0.0f;
+        float mipBias = 0.0f;
+        float inverseMaxSlopeCompensation = 0.0f;
+        float backfaceThreshold = 0.0f;
+        float backfaceBoost = 0.0f;
+        uint32_t pad0 = 0, pad1 = 0, pad2 = 0;
+    };
+    vsg::ref_ptr<vsg::Value<CortaoMainParams>> m_CortaoParams;
+    vsg::ref_ptr<vsg::Switch> m_CortaoVariants;
+    double m_Radius = 1.0;
     vsg::ref_ptr<vsg::View> m_CompositionView;
     vsg::ref_ptr<vsg::Camera> m_CompositionCamera;
 };

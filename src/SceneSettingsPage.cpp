@@ -1,4 +1,4 @@
-#include "SceneSettingsDialog.h"
+#include "SceneSettingsPage.h"
 
 #include "Viewport3D.h"
 
@@ -68,9 +68,8 @@ vsg::vec4 linearColor(const QColor& color)
   return vsg::vec4(toLinear(color.redF()), toLinear(color.greenF()), toLinear(color.blueF()), 1.0f);
 }
 
-SceneSettingsDialog::SceneSettingsDialog(Viewport3D* viewport, QWidget* parent) : QDialog(parent), m_Viewport(viewport)
+SceneSettingsPage::SceneSettingsPage(Viewport3D* viewport, QWidget* parent) : QWidget(parent), m_Viewport(viewport)
 {
-  setWindowTitle("Scene Settings");
 
   const QSettings settings;
   m_Viewport->setBackground(storedColor(settings, "View/BackgroundColor", Viewport3D::defaultBackground()));
@@ -143,12 +142,9 @@ SceneSettingsDialog::SceneSettingsDialog(Viewport3D* viewport, QWidget* parent) 
   materialsForm->addRow("Roughness:", valueRow(m_RoughnessSlider, m_RoughnessSpin));
 
   auto* reset = new QPushButton("Reset to Defaults", this);
-  auto* close = new QPushButton("Close", this);
-  close->setDefault(true);
   auto* buttons = new QHBoxLayout;
   buttons->addWidget(reset);
   buttons->addStretch(1);
-  buttons->addWidget(close);
 
   auto* layout = new QVBoxLayout(this);
   layout->addWidget(background);
@@ -156,7 +152,6 @@ SceneSettingsDialog::SceneSettingsDialog(Viewport3D* viewport, QWidget* parent) 
   layout->addWidget(edges);
   layout->addWidget(materials);
   layout->addLayout(buttons);
-  setMinimumWidth(340);
 
   connect(m_TopButton, &QPushButton::clicked, this, [this]() {
     const QColor initial = m_Viewport->background();
@@ -208,18 +203,17 @@ SceneSettingsDialog::SceneSettingsDialog(Viewport3D* viewport, QWidget* parent) 
     applyMaterial();
     updateWidgets();
   });
-  connect(m_Preset, &QComboBox::activated, this, &SceneSettingsDialog::applyPreset);
-  connect(reset, &QPushButton::clicked, this, &SceneSettingsDialog::resetToDefaults);
-  connect(close, &QPushButton::clicked, this, &QDialog::hide);
+  connect(m_Preset, &QComboBox::activated, this, &SceneSettingsPage::applyPreset);
+  connect(reset, &QPushButton::clicked, this, &SceneSettingsPage::resetToDefaults);
   updateWidgets();
 }
 
-SceneSettingsDialog::~SceneSettingsDialog()
+SceneSettingsPage::~SceneSettingsPage()
 {
   save();
 }
 
-bool SceneSettingsDialog::pickColor(const QString& title, const QColor& initial, const std::function<void(const QColor&)>& apply)
+bool SceneSettingsPage::pickColor(const QString& title, const QColor& initial, const std::function<void(const QColor&)>& apply)
 {
   QColorDialog dialog(initial, this);
   dialog.setWindowTitle(title);
@@ -233,7 +227,7 @@ bool SceneSettingsDialog::pickColor(const QString& title, const QColor& initial,
   return false;
 }
 
-void SceneSettingsDialog::applyPreset(int index)
+void SceneSettingsPage::applyPreset(int index)
 {
   if (index < 1 || index > static_cast<int>(presets().size())) return;
   const Preset& preset = presets()[static_cast<size_t>(index - 1)];
@@ -251,13 +245,13 @@ void SceneSettingsDialog::applyPreset(int index)
   if (!wasPbr) emit usePbrChanged(true);
 }
 
-void SceneSettingsDialog::applyMaterial()
+void SceneSettingsPage::applyMaterial()
 {
   m_Viewport->setMaterialOverride(m_OverrideMaterial, static_cast<float>(m_Metallic), static_cast<float>(m_Roughness));
 }
 
 // Brings the widgets in line with the state, without feeding back into it.
-void SceneSettingsDialog::updateWidgets()
+void SceneSettingsPage::updateWidgets()
 {
   const QSignalBlocker blockPreset(m_Preset), blockGradient(m_Gradient), blockOverride(m_Override), blockMetallicSlider(m_MetallicSlider),
       blockRoughnessSlider(m_RoughnessSlider), blockMetallicSpin(m_MetallicSpin), blockRoughnessSpin(m_RoughnessSpin);
@@ -286,7 +280,7 @@ void SceneSettingsDialog::updateWidgets()
     w->setEnabled(m_OverrideMaterial);
 }
 
-void SceneSettingsDialog::resetToDefaults()
+void SceneSettingsPage::resetToDefaults()
 {
   m_Viewport->setBackground(Viewport3D::defaultBackground());
   m_Viewport->setBackgroundBottom(Viewport3D::defaultBackgroundBottom());
@@ -304,18 +298,18 @@ void SceneSettingsDialog::resetToDefaults()
   if (wasPbr) emit usePbrChanged(false);
 }
 
-void SceneSettingsDialog::setUsePbr(bool on)
+void SceneSettingsPage::setUsePbr(bool on)
 {
   m_Override->setChecked(on);
 }
 
-void SceneSettingsDialog::hideEvent(QHideEvent* event)
+void SceneSettingsPage::hideEvent(QHideEvent* event)
 {
-  QDialog::hideEvent(event);
+  QWidget::hideEvent(event);
   save();
 }
 
-void SceneSettingsDialog::save() const
+void SceneSettingsPage::save() const
 {
   QSettings settings;
   settings.setValue("View/BackgroundColor", m_Viewport->background());

@@ -1,0 +1,53 @@
+// The CORTAO prepass on shtetl's G-buffer (the version line, the defines and
+// the CORTAO sources are put in front of this by AmbientOcclusion.cpp).
+//
+// The G-buffer already holds the linear depth (-view z, in the position's w), so
+// the prepass is run as its orthographic variant with scale 1 and offset 0,
+// which passes the depth through for both projections. Depth 0 is the sky.
+
+layout(local_size_x = 8, local_size_y = 8) in;
+
+layout(binding = 0) uniform sampler2D samplerPositionDepth;
+layout(binding = 1) uniform sampler2D samplerNormal;
+layout(binding = 2) uniform PrepassBlock
+{
+    CORTAOPrepassParameters p;
+} ubo;
+layout(binding = 3, r32ui) uniform writeonly uimage2D packedMips[8];
+
+cortao_float cortao_loadDepth(cortao_int2 pixelCoords)
+{
+    const vec4 position = texelFetch(samplerPositionDepth, pixelCoords, 0);
+    const vec4 normal = texelFetch(samplerNormal, pixelCoords, 0);
+    return (normal.a < 0.5 || position.a >= 0.0) ? 0.0 : -position.a;
+}
+
+cortao_float3 cortao_loadNormal(cortao_int2 pixelCoords)
+{
+    vec3 n = normalize(texelFetch(samplerNormal, pixelCoords, 0).rgb * 2.0 - 1.0);
+    // The encoding is singular at -z; a normal that faces away from the camera
+    // is a silhouette's, and only the direction matters.
+    n.z = max(n.z, -0.7);
+    return normalize(n);
+}
+
+void cortao_writePackedData(cortao_int2 pixelCoords, cortao_int mipLevel, cortao_uint data)
+{
+    const uvec4 value = uvec4(data, 0u, 0u, 0u);
+    switch (mipLevel)
+    {
+    case 0: imageStore(packedMips[0], pixelCoords, value); break;
+    case 1: imageStore(packedMips[1], pixelCoords, value); break;
+    case 2: imageStore(packedMips[2], pixelCoords, value); break;
+    case 3: imageStore(packedMips[3], pixelCoords, value); break;
+    case 4: imageStore(packedMips[4], pixelCoords, value); break;
+    case 5: imageStore(packedMips[5], pixelCoords, value); break;
+    case 6: imageStore(packedMips[6], pixelCoords, value); break;
+    default: imageStore(packedMips[7], pixelCoords, value); break;
+    }
+}
+
+void main()
+{
+    cortao_prepass(gl_GlobalInvocationID.xy, ubo.p);
+}

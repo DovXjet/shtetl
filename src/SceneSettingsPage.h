@@ -3,7 +3,7 @@
 #include <vsg/maths/vec4.h>
 
 #include <QColor>
-#include <QDialog>
+#include <QWidget>
 
 class QCheckBox;
 class QComboBox;
@@ -17,15 +17,15 @@ vsg::vec4 linearColor(const QColor& color);
 
 // The settings of the 3D scene in one place: the background (solid or a
 // gradient), the color of STL and 3MF models, the color and width of the edges, and the metallic / roughness
-// that override the materials of glTF models. Not modal: every change shows in
-// the view at once. Restored from, and saved to, QSettings.
-class SceneSettingsDialog : public QDialog
+// that override the materials of glTF models. A page of the Preferences: every change shows in
+// the view at once. Restored from, and saved to, QSettings (when hidden, and at the end).
+class SceneSettingsPage : public QWidget
 {
     Q_OBJECT
 
   public:
-    SceneSettingsDialog(Viewport3D* viewport, QWidget* parent);
-    ~SceneSettingsDialog() override;
+    SceneSettingsPage(Viewport3D* viewport, QWidget* parent);
+    ~SceneSettingsPage() override;
 
     // The color STL and 3MF models are loaded with.
     QColor modelColor() const { return m_ModelColor; }

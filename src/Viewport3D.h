@@ -132,6 +132,13 @@ class Viewport3D : public QWidget
     // shaders, take part; the others are shown as before.
     void setAmbientOcclusion(bool enabled);
     bool isAmbientOcclusion() const { return m_AmbientOcclusion; }
+    // Which algorithm the occlusion uses (the ambient occlusion itself is switched on separately).
+    // How much the occlusion darkens, from 0 (nothing) to 1 (all of it); takes effect at once.
+    void setOcclusionStrength(double strength);
+    double occlusionStrength() const { return m_OcclusionStrength; }
+    static double defaultOcclusionStrength() { return 0.85; }
+    void setOcclusionAlgorithm(OcclusionAlgorithm algorithm);
+    OcclusionAlgorithm occlusionAlgorithm() const { return m_OcclusionAlgorithm; }
 
     // The color behind the model (sRGB); the top of the gradient when that is
     // on. The default is XjetStudio's deep blue.
@@ -267,6 +274,8 @@ class Viewport3D : public QWidget
     float m_OverrideMetallic = 0.0f, m_OverrideRoughness = 0.5f;
     vsg::ref_ptr<GradientBackground> m_Gradient; // while it is in the scene graph
     bool m_AmbientOcclusion = false;
+    OcclusionAlgorithm m_OcclusionAlgorithm = OcclusionAlgorithm::Ssao;
+    double m_OcclusionStrength = defaultOcclusionStrength();
     vsg::ref_ptr<AmbientOcclusion> m_Occlusion; // while it is in the scene graph
     vsg::ref_ptr<AmbientOcclusionUpdater> m_OcclusionUpdater;
     // The size of the window in pixels, as of the last resize; the occlusion's

@@ -7,7 +7,7 @@
 #include "NavigationStyles.h"
 #include "OpenFileDialog.h"
 #include "PartsPanel.h"
-#include "SceneSettingsDialog.h"
+#include "SceneSettingsPage.h"
 #include "Preferences.h"
 #include "ThumbnailBrowser.h"
 #include "ThumbnailService.h"
@@ -258,8 +258,6 @@ void MainWindow::createMenus()
   fileMenu->addSeparator();
   fileMenu->addAction("&Reload", QKeySequence("F5"), this, &MainWindow::reload);
   fileMenu->addSeparator();
-  fileMenu->addAction("&Preferences...", this, &MainWindow::showPreferences);
-  fileMenu->addSeparator();
   auto* quit = fileMenu->addAction("&Quit", qApp, &QApplication::quit);
   quit->setShortcut(QKeySequence::Quit);
 
@@ -269,6 +267,8 @@ void MainWindow::createMenus()
   m_CopyAction = editMenu->addAction("&Copy", QKeySequence::Copy, this, &MainWindow::copyToClipboard);
   m_CopyAction->setStatusTip("Copy the model file to the clipboard");
   m_CopyAction->setEnabled(false); // until a model is shown
+  editMenu->addSeparator();
+  editMenu->addAction("&Preferences...", this, &MainWindow::showPreferences);
 
   auto* viewMenu = menuBar()->addMenu("&View");
   // Also added to the window, so its shortcut works - and can bring the menu
@@ -306,11 +306,28 @@ void MainWindow::createMenus()
   });
   occlusion->setChecked(QSettings().value("View/AmbientOcclusion", false).toBool());
   announce(occlusion, "Ambient occlusion");
-  auto* aoLabel = new QLabel("AO", this);
-  aoLabel->setToolTip("Ambient Occlusion");
-  aoLabel->setVisible(occlusion->isChecked());
-  statusBar()->addPermanentWidget(aoLabel);
-  connect(occlusion, &QAction::toggled, aoLabel, &QLabel::setVisible);
+  m_AoLabel = new QLabel("AO", this);
+  m_AoLabel->setToolTip("Ambient Occlusion");
+  m_AoLabel->setVisible(occlusion->isChecked());
+  statusBar()->addPermanentWidget(m_AoLabel);
+  connect(occlusion, &QAction::toggled, m_AoLabel, &QLabel::setVisible);
+  // Shift+F11 steps through the algorithms (SSAO, CORTAO, hybrid), to compare them; not in the menu,
+  // the choice is in the preferences.
+  auto* cycle = new QAction("Cycle Occlusion Algorithm", this);
+  cycle->setShortcut(QKeySequence("Shift+F11"));
+  addAction(cycle);
+  connect(cycle, &QAction::triggered, this, [this]() {
+    switch (m_Viewport->occlusionAlgorithm())
+    {
+    case OcclusionAlgorithm::Ssao: setOcclusionAlgorithm(OcclusionAlgorithm::Cortao, true); break;
+    case OcclusionAlgorithm::Cortao: setOcclusionAlgorithm(OcclusionAlgorithm::Hybrid, true); break;
+    case OcclusionAlgorithm::Hybrid: setOcclusionAlgorithm(OcclusionAlgorithm::Ssao, true); break;
+    }
+  });
+  applyOcclusionSettings();
+  // SHTETL_CORTAO=1 starts with CORTAO, =2 with the hybrid (whatever the preferences say, and not saved).
+  if (qEnvironmentVariableIsSet("SHTETL_CORTAO"))
+    setOcclusionAlgorithm(qEnvironmentVariableIntValue("SHTETL_CORTAO") == 2 ? OcclusionAlgorithm::Hybrid : OcclusionAlgorithm::Cortao, false);
   auto* autoReload = viewMenu->addAction("Auto Re&load");
   autoReload->setCheckable(true);
   autoReload->setStatusTip("Reload the model when its file changes, e.g. when a CadQuery script exports it");
@@ -338,23 +355,17 @@ void MainWindow::createMenus()
   });
   viewMenu->addSeparator();
 
-  // The scene settings (background, model color, glTF materials), in a window
-  // of their own; it restores them and applies them to the view.
-  m_SceneSettings = new SceneSettingsDialog(m_Viewport, this);
-  connect(m_SceneSettings, &SceneSettingsDialog::modelColorChanged, this, [this](const QColor& color) { m_Viewport->setModelColor(linearColor(color)); });
-  auto* sceneSettings = viewMenu->addAction("Scene &Settings...", this, [this]() {
-    m_SceneSettings->show();
-    m_SceneSettings->raise();
-    m_SceneSettings->activateWindow();
-  });
-  sceneSettings->setShortcut(QKeySequence("F8"));
-  addAction(sceneSettings); // so that the shortcut works while the menu bar is hidden
-  sceneSettings->setStatusTip("Background, model color, edges and material properties");
-  // The same switch as in the settings window.
+  // The scene settings (background, model color, glTF materials) are a page of the
+  // preferences, which are not modal; the page restores them and applies them to the view.
+  m_SceneSettings = new SceneSettingsPage(m_Viewport, nullptr);
+  m_Preferences = new Preferences(new QSettings(this), m_SceneSettings, this);
+  connect(m_Preferences, &Preferences::occlusionChanged, this, &MainWindow::applyOcclusionSettings);
+  connect(m_SceneSettings, &SceneSettingsPage::modelColorChanged, this, [this](const QColor& color) { m_Viewport->setModelColor(linearColor(color)); });
+  // The same switch as in the preferences.
   auto* usePbr = viewMenu->addAction("Use &PBR Shader");
   usePbr->setCheckable(true);
   usePbr->setShortcut(QKeySequence("Ctrl+Shift+P"));
-  usePbr->setStatusTip("Draw with the physically based shader and its studio environment (metallic and roughness are set in Scene Settings)");
+  usePbr->setStatusTip("Draw with the physically based shader and its studio environment (metallic and roughness are set in the preferences)");
   addAction(usePbr);
   usePbr->setChecked(m_SceneSettings->usePbr());
   announce(usePbr, "PBR shader");
@@ -364,11 +375,11 @@ void MainWindow::createMenus()
   pbrLabel->setVisible(usePbr->isChecked());
   statusBar()->addPermanentWidget(pbrLabel);
   connect(usePbr, &QAction::toggled, pbrLabel, &QLabel::setVisible);
-  connect(usePbr, &QAction::toggled, m_SceneSettings, &SceneSettingsDialog::setUsePbr);
-  connect(m_SceneSettings, &SceneSettingsDialog::usePbrChanged, usePbr, &QAction::setChecked);
+  connect(usePbr, &QAction::toggled, m_SceneSettings, &SceneSettingsPage::setUsePbr);
+  connect(m_SceneSettings, &SceneSettingsPage::usePbrChanged, usePbr, &QAction::setChecked);
 
   // The edges of STL and 3MF models drawn over them; their color and width are
-  // in Scene Settings. One of three, remembered between runs.
+  // in the preferences. One of three, remembered between runs.
   auto* edgesMenu = viewMenu->addMenu("&Edges");
   edgesMenu->setStatusTip("Draw the edges of STL and 3MF models over them");
   auto* edgesGroup = new QActionGroup(edgesMenu);
@@ -510,9 +521,42 @@ void MainWindow::createMenus()
 
 void MainWindow::showPreferences()
 {
-  QSettings settings;
-  Preferences dialog(&settings, this);
-  dialog.exec();
+  m_Preferences->show();
+  m_Preferences->raise();
+  m_Preferences->activateWindow();
+}
+
+void MainWindow::applyOcclusionSettings()
+{
+  const QSettings settings;
+  m_Viewport->setOcclusionStrength(settings.value(Preferences::OcclusionStrengthKey, Viewport3D::defaultOcclusionStrength()).toDouble());
+  const int algorithm = std::clamp(settings.value(Preferences::OcclusionAlgorithmKey, 0).toInt(), 0, 2);
+  setOcclusionAlgorithm(static_cast<OcclusionAlgorithm>(algorithm), false);
+}
+
+// To the view and the status bar, and (as it is chosen) into the settings, which the preferences show.
+void MainWindow::setOcclusionAlgorithm(OcclusionAlgorithm algorithm, bool announce)
+{
+  const bool changed = algorithm != m_Viewport->occlusionAlgorithm();
+  m_Viewport->setOcclusionAlgorithm(algorithm);
+  QString name, label = "AO";
+  switch (algorithm)
+  {
+  case OcclusionAlgorithm::Ssao: name = "the original SSAO (Crytek-style hemisphere)"; break;
+  case OcclusionAlgorithm::Cortao: name = "CORTAO SSAO (compute, circular occluders)"; label = "AO (CORTAO)"; break;
+  case OcclusionAlgorithm::Hybrid: name = "the hybrid (CORTAO + SSAO, the darker of the two)"; label = "AO (hybrid)"; break;
+  }
+  m_AoLabel->setText(label);
+  if (announce)
+  {
+    QSettings().setValue(Preferences::OcclusionAlgorithmKey, static_cast<int>(algorithm));
+    m_Preferences->refreshOcclusion();
+    statusBar()->showMessage("Switched to " + name + (m_Viewport->isAmbientOcclusion() ? "" : " (ambient occlusion is off: Ctrl+Shift+A)"), 4000);
+  }
+  else if (changed)
+  {
+    statusBar()->showMessage("Occlusion algorithm: " + name, 4000);
+  }
 }
 
 void MainWindow::showAboutDialog()

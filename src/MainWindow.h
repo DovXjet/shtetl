@@ -1,5 +1,7 @@
 #pragma once
 
+#include "AmbientOcclusion.h"
+
 #include "CompactMesh.h"
 
 #include <QDateTime>
@@ -15,9 +17,11 @@
 class AnimationBar;
 class QAction;
 class QProgressBar;
-class SceneSettingsDialog;
+class Preferences;
+class SceneSettingsPage;
 class QCloseEvent;
 class QDockWidget;
+class QLabel;
 class QMenu;
 class PartsPanel;
 class ThumbnailBrowser;
@@ -42,6 +46,9 @@ class MainWindow : public QMainWindow
     void createMenus();
     void showAboutDialog();
     void showPreferences();
+    // The ambient occlusion settings of the preferences, to the view.
+    void applyOcclusionSettings();
+    void setOcclusionAlgorithm(OcclusionAlgorithm algorithm, bool announce);
     void copyToClipboard();
     void openFileDialog();
     void openDirectoryDialog();
@@ -79,8 +86,10 @@ class MainWindow : public QMainWindow
     bool m_UpdatingPartsDock = false; // shown or hidden by showPartsOf(), not by the user
     QMenu* m_RecentMenu = nullptr;
     QAction* m_CopyAction = nullptr;
+    QLabel* m_AoLabel = nullptr; // in the status bar while the ambient occlusion is on
     QString m_CurrentFile;
-    SceneSettingsDialog* m_SceneSettings = nullptr;
+    SceneSettingsPage* m_SceneSettings = nullptr; // a page of the preferences
+    Preferences* m_Preferences = nullptr;
 
     // The background load: on their own threads (two at most, so that a new
     // one need not wait for the cancelled one to notice), numbered so that the result of one

@@ -174,7 +174,6 @@ namespace
   // The occlusion: how far it reaches (as a fraction of the model's radius)
   // and how much it darkens.
   constexpr double AmbientOcclusionRadius = 0.12;
-  constexpr float AmbientOcclusionStrength = 0.85f;
 
 
 } // namespace
@@ -661,8 +660,8 @@ void Viewport3D::buildSceneGraph()
     if (m_EdgeMode != EdgeMode::Off && m_Edges) gbufferScene->addChild(makeEdgesNode(m_Edges, m_EdgeMode == EdgeMode::Sharp, m_Compact, m_EdgeStyle, true));
     const VkExtent2D occlusionExtent = m_PixelExtent.width > 0 ? m_PixelExtent : extent;
     m_Occlusion = AmbientOcclusion::create(device, m_Camera, gbufferScene, occlusionExtent, m_FitRadius * AmbientOcclusionRadius, srgbVec(m_Background),
-                                     m_GradientBackground ? srgbVec(m_BackgroundBottom) : srgbVec(m_Background));
-    m_Occlusion->setStrength(AmbientOcclusionStrength);
+                                     m_GradientBackground ? srgbVec(m_BackgroundBottom) : srgbVec(m_Background), m_OcclusionAlgorithm);
+    m_Occlusion->setStrength(static_cast<float>(m_OcclusionStrength));
     m_OcclusionUpdater = AmbientOcclusionUpdater::create();
     m_OcclusionUpdater->occlusion = m_Occlusion;
     m_Viewer->addEventHandler(m_OcclusionUpdater);
@@ -798,6 +797,23 @@ void Viewport3D::setAmbientOcclusion(bool enabled)
   if (enabled == m_AmbientOcclusion) return;
   m_AmbientOcclusion = enabled;
   if (m_Camera && m_Window && m_Window->windowAdapter) rebuildSceneGraph();
+}
+
+void Viewport3D::setOcclusionStrength(double strength)
+{
+  m_OcclusionStrength = std::clamp(strength, 0.0, 1.0);
+  if (m_Occlusion)
+  {
+    m_Occlusion->setStrength(static_cast<float>(m_OcclusionStrength));
+    if (m_Viewer) m_Viewer->request();
+  }
+}
+
+void Viewport3D::setOcclusionAlgorithm(OcclusionAlgorithm algorithm)
+{
+  if (algorithm == m_OcclusionAlgorithm) return;
+  m_OcclusionAlgorithm = algorithm;
+  if (m_AmbientOcclusion && m_Camera && m_Window && m_Window->windowAdapter) rebuildSceneGraph();
 }
 
 vsg::vec3 Viewport3D::backgroundLinear() const

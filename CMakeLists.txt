@@ -61,7 +61,7 @@ add_executable(shtetl
   src/main.cpp
   src/Logging.cpp
   src/MainWindow.cpp
-  src/SceneSettingsDialog.cpp
+  src/SceneSettingsPage.cpp
   src/Viewport3D.cpp
   src/AnimationPlayer.cpp
   src/AnimationBar.cpp
@@ -100,7 +100,10 @@ qt_add_resources(shtetl cube_gizmo PREFIX / BASE resources FILES ${CUBE_GIZMO_ST
 set(SHTETL_SHADER_FILES
             resources/shaders/compact_mesh.vert resources/shaders/compact_mesh.frag
             resources/shaders/compact_mesh_gbuffer.frag resources/shaders/ao_fullscreen.vert resources/shaders/ao_ssao.frag resources/shaders/ao_blur.frag
-            resources/shaders/ao_composite.frag resources/shaders/ao_fxaa.frag resources/shaders/gradient_background.frag
+            resources/shaders/ao_composite.frag resources/shaders/ao_fxaa.frag
+            resources/shaders/ao_cortao_prepass.comp resources/shaders/ao_cortao_main.comp resources/shaders/cortao/CORTAOBase.h
+            resources/shaders/cortao/CORTAOPrepass.h resources/shaders/cortao/CORTAOMainPass.h resources/shaders/cortao/CORTAOFilterPass.h
+            resources/shaders/ao_cortao_filter.comp resources/shaders/ao_blur_bilateral.frag resources/shaders/cortao/24x24x16x16_R16_UINT.bin resources/shaders/gradient_background.frag
             resources/shaders/pbr_environment.glsl resources/shaders/compact_pbr_common.glsl resources/shaders/compact_pbr.frag resources/shaders/compact_pbr_gbuffer.frag
             resources/shaders/edge_lines.vert resources/shaders/edge_lines.frag resources/shaders/edge_lines_gbuffer.frag)
 qt_add_resources(shtetl shaders PREFIX / BASE resources FILES ${SHTETL_SHADER_FILES})
